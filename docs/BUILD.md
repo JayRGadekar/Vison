@@ -204,6 +204,49 @@ next time upstream published, which is why it is not used.
 `FFMPEG-LICENSE.txt` (the full LGPL v3 text, from the upstream archive) ships in
 the same folder, and the notice points at it.
 
+## Continuous integration
+
+`.github/workflows/build.yml` builds the backend and packages the installer on
+`windows-latest` — for pushes and PRs against `main`, on demand, and on a
+published release.
+
+It is Windows-only on purpose. `extraResources` in `app/package.json` filters
+the backend down to `vison_server.exe`, `*.dll` and `ffmpeg.exe`, none of which
+a macOS or Linux build produces, so a mac job would go green and hand back a
+`.dmg` with no backend inside it. Those targets are real work, not a matrix
+entry.
+
+Three things it has to do that a local build gets for free:
+
+- **Restore `third_party/`.** It is not in the repo, so the first real step is
+  `scripts/bootstrap-third-party.sh` (see [PATCHES.md](../PATCHES.md)). Cached,
+  keyed on that script and the patch files.
+- **Install the Vulkan SDK**, not just the runtime. `glslc` ships only in the
+  SDK, and without it the root `CMakeLists.txt` quietly falls back to CPU. CI
+  passes `-DVISON_VULKAN=ON` explicitly so a missing SDK is a build failure
+  rather than a green run producing a backend nobody wants, then asserts
+  `ggml-vulkan.dll` actually landed in `build/bin`.
+- **Download the LGPL ffmpeg** from BtbN and stage it into `build/bin` before
+  packaging, so the bundled binary is the one the licence gate expects.
+
+It also smoke-tests the backend: start `vison_server.exe`, wait for
+`/api/system`, stop it. That is aimed at the failure mode with no error message
+at all — a DLL that cannot be resolved and a process that simply vanishes.
+
+### CI needs the client ID too
+
+Set **`VISON_GOOGLE_CLIENT_ID`** as a repository *variable* (Settings → Secrets
+and variables → Actions → Variables). It is a public identifier — a desktop
+OAuth client has no secret — so a variable is the honest home for it; a secret
+of the same name is read as a fallback.
+
+Until it is set, push and PR builds still run. They use
+`VISON_ALLOW_UNCONFIGURED_AUTH=1`, and the artifact is named
+`Vison-Setup-windows-UNCONFIGURED` because that installer shows "Sign-in is not
+configured" and can do nothing else. A **published release** with no client ID
+fails instead, which is the one case where the unusable build would actually
+reach users.
+
 ## Environment variables the backend reads
 
 | Variable | Effect |

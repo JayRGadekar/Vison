@@ -1,95 +1,284 @@
-name: Build Vison Cross-Platform
+# Builds the C++/Vulkan backend, then packages the Electron installer around it.
+#
+# Windows only, and that is deliberate rather than an omission. The packaging
+# config in app/package.json copies the backend with the filter
+# ["vison_server.exe", "*.dll", "ffmpeg.exe"], which matches nothing a macOS or
+# Linux build produces, and docs/BUILD.md describes a Windows toolchain
+# throughout. A mac job would not fail loudly - it would produce a .dmg with no
+# backend inside it. Adding those targets is real work, not a matrix entry.
+
+name: Build Vison
 
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
+  release:
+    types: [ published ]
+
+# Compiling ggml's Vulkan shaders plus stable-diffusion.cpp is the bulk of the
+# run, so superseded builds are not worth finishing.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build-backend:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            suffix: win.exe
-            arch: x64
-          - os: macos-latest
-            suffix: mac
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    
+  build:
+    name: Backend + installer (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 150
+
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
+
+      # ------------------------------------------------------------------
+      # Is this build going to produce a usable installer?
+      #
+      # Every screen in Vison is behind Google sign-in, and the client ID has
+      # to be baked in at build time (see docs/OAUTH-SETUP.md). Without one,
+      # app/scripts/check-auth-configured.cjs refuses to package - correctly,
+      # because the installer would show "Sign-in is not configured" and stop
+      # there for every user who installed it.
+      #
+      # For ordinary CI that gate is too strict: a build proving the tree still
+      # compiles is worth having before the ID exists. So an unconfigured push
+      # build is let through with the documented override, and its artifact is
+      # named so nobody mistakes it for something shippable. A published
+      # release is not let through.
+      #
+      # The ID is a public identifier - a desktop OAuth client has no secret -
+      # so a repository variable is the right home for it. A secret is accepted
+      # too, for anyone who set it up that way.
+      # ------------------------------------------------------------------
+      - name: Resolve OAuth client ID
+        id: auth
+        shell: bash
+        env:
+          FROM_VAR: ${{ vars.VISON_GOOGLE_CLIENT_ID }}
+          FROM_SECRET: ${{ secrets.VISON_GOOGLE_CLIENT_ID }}
+        run: |
+          CLIENT_ID="${FROM_VAR:-$FROM_SECRET}"
+          if [ -n "$CLIENT_ID" ]; then
+            echo "configured=true"      >> "$GITHUB_OUTPUT"
+            echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+            echo "allow_unconfigured="  >> "$GITHUB_OUTPUT"
+            echo "suffix="              >> "$GITHUB_OUTPUT"
+            echo "Client ID present; building a usable installer."
+          elif [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            echo "::error title=No OAuth client ID::Refusing to build a release installer with no Google OAuth client ID. Every screen is behind sign-in, so this build would be unusable for everyone who installed it. Set the repository variable VISON_GOOGLE_CLIENT_ID under Settings -> Secrets and variables -> Actions -> Variables. See docs/OAUTH-SETUP.md."
+            exit 1
+          else
+            echo "configured=false"     >> "$GITHUB_OUTPUT"
+            echo "client_id="           >> "$GITHUB_OUTPUT"
+            echo "allow_unconfigured=1" >> "$GITHUB_OUTPUT"
+            echo "suffix=-UNCONFIGURED" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unconfigured build::No VISON_GOOGLE_CLIENT_ID is set, so this installer shows 'Sign-in is not configured' and cannot be used. It is a compile check only. See docs/OAUTH-SETUP.md."
+          fi
+
+      # ------------------------------------------------------------------
+      # third_party/ is not in the repo (see PATCHES.md): the dependencies are
+      # full clones carrying local patches, one of which is load-bearing -
+      # without it FLUX is rejected as an unknown architecture and image
+      # generation does not work at all. The bootstrap script reclones at the
+      # pinned commits and reapplies them. It is idempotent, so a cache hit
+      # just walks through it confirming there is nothing to do.
+      # ------------------------------------------------------------------
+      - name: Cache third_party clones
+        uses: actions/cache@v4
         with:
-          python-version: "3.11"
-          cache: "pip"
+          path: |
+            third_party/stable-diffusion.cpp
+            third_party/vision.cpp
+          key: third-party-${{ runner.os }}-${{ hashFiles('scripts/bootstrap-third-party.sh', 'third_party/patches/*.patch') }}
 
-      - name: Install dependencies (Windows - CUDA)
-        if: runner.os == 'Windows'
+      - name: Restore third_party
+        shell: bash
+        run: sh scripts/bootstrap-third-party.sh
+
+      # ------------------------------------------------------------------
+      # The Vulkan *runtime* is not enough: ggml compiles its compute shaders
+      # with glslc, which only ships in the SDK. Without it the root
+      # CMakeLists falls back to CPU with a warning - a green build producing a
+      # backend nobody would want. Passing -DVISON_VULKAN=ON below turns that
+      # into a hard failure instead of a quiet downgrade.
+      # ------------------------------------------------------------------
+      - name: Install Vulkan SDK
+        shell: pwsh
         run: |
-          cd backend
-          pip install -r requirements.txt
-          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-          pip install pyinstaller
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe'
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP/vulkan_sdk.exe"
+          # --root installs straight into the given directory rather than a
+          # versioned subfolder, which keeps VULKAN_SDK below independent of
+          # whatever 'latest' resolves to on the day.
+          & "$env:RUNNER_TEMP/vulkan_sdk.exe" --root C:/VulkanSDK --accept-licenses --default-answer --confirm-command install
+          if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK installer exited $LASTEXITCODE" }
+          "VULKAN_SDK=C:/VulkanSDK" | Out-File -FilePath $env:GITHUB_ENV  -Append -Encoding utf8
+          "C:/VulkanSDK/Bin"        | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Install dependencies (Mac - Standard/MPS)
-        if: runner.os == 'macOS'
+      - name: Verify glslc is available
+        shell: pwsh
         run: |
-          cd backend
-          pip install -r requirements.txt
-          pip install torch torchvision torchaudio
-          pip install pyinstaller
+          if (-not (Test-Path 'C:/VulkanSDK/Bin/glslc.exe')) {
+            throw "glslc.exe is missing from the Vulkan SDK install. The Vulkan backend cannot be built without it."
+          }
+          & 'C:/VulkanSDK/Bin/glslc.exe' --version
 
-      - name: Package Backend via PyInstaller
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DVISON_VULKAN=ON
+
+      - name: Build backend
+        shell: pwsh
+        run: cmake --build build --config Release --target vison_server --parallel
+
+      # Every DLL has to land beside the exe or vison_server exits silently on
+      # launch with nothing logged - the reason the root CMakeLists pins every
+      # output directory, in every config, to build/bin.
+      - name: Verify backend layout
+        shell: pwsh
         run: |
-          cd backend
-          pyinstaller backend.spec
-          
-      - name: Upload Backend Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-${{ matrix.os }}
-          path: backend/dist/vison-backend/
+          $ErrorActionPreference = 'Stop'
+          $required = @('vison_server.exe','ggml.dll','ggml-base.dll','ggml-cpu.dll','ggml-vulkan.dll','visioncpp.dll')
+          $missing = $required | Where-Object { -not (Test-Path "build/bin/$_") }
+          Get-ChildItem build/bin | Format-Table Name, Length
+          if ($missing) {
+            throw "Missing from build/bin: $($missing -join ', '). A missing ggml-vulkan.dll means the build fell back to CPU."
+          }
 
-  build-frontend:
-    needs: build-backend
-    strategy:
-      matrix:  
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      # ------------------------------------------------------------------
+      # ffmpeg is bundled, and which build gets bundled is a licensing
+      # decision rather than a convenience one: the usual Windows ffmpeg is
+      # --enable-gpl --enable-libx264, which makes the binary GPL no matter
+      # which encoder we call. BtbN publishes an LGPL build with libvpx, which
+      # is what the VP9/WebM output path needs. check-ffmpeg-license.cjs
+      # enforces this during packaging anyway; running it here fails earlier.
+      # ------------------------------------------------------------------
+      - name: Stage the LGPL ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP/ffmpeg-lgpl.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP/ffmpeg-lgpl.zip" -DestinationPath "$env:RUNNER_TEMP/ffmpeg" -Force
+          $exe = Get-ChildItem -Path "$env:RUNNER_TEMP/ffmpeg" -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+          if (-not $exe) { throw "No ffmpeg.exe inside the downloaded archive." }
+          Copy-Item $exe.FullName -Destination 'build/bin/ffmpeg.exe' -Force
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
-          cache-dependency-path: './app/package.json'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
 
-      - name: Install Dependencies
+      - name: Check the bundled ffmpeg licence
+        shell: pwsh
+        run: node app/scripts/check-ffmpeg-license.cjs
+
+      # Catches the failure that produces no error message at all: a backend
+      # that starts, cannot resolve a DLL, and disappears. The runner has no
+      # GPU, so this exercises the CPU fallback - which is what a user without
+      # a usable Vulkan device gets too.
+      - name: Smoke-test the backend
+        shell: pwsh
         run: |
-          cd app
-          npm install
+          $ErrorActionPreference = 'Stop'
+          $env:VISON_DATA_DIR = "$PWD/ci-data"
+          $proc = Start-Process -FilePath 'build/bin/vison_server.exe' -PassThru -NoNewWindow -RedirectStandardOutput 'ci-server-out.log' -RedirectStandardError 'ci-server-err.log'
+          try {
+            $ok = $false
+            foreach ($i in 1..60) {
+              if ($proc.HasExited) { break }
+              try {
+                $r = Invoke-WebRequest -Uri 'http://127.0.0.1:11439/api/system' -UseBasicParsing -TimeoutSec 5
+                if ($r.StatusCode -eq 200) { $ok = $true; Write-Host "/api/system -> $($r.Content)"; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ok) {
+              Write-Host '--- stdout ---'; Get-Content ci-server-out.log -ErrorAction SilentlyContinue
+              Write-Host '--- stderr ---'; Get-Content ci-server-err.log -ErrorAction SilentlyContinue
+              if ($proc.HasExited) { throw "vison_server.exe exited with code $($proc.ExitCode) instead of serving." }
+              throw "vison_server.exe never answered on 127.0.0.1:11439."
+            }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
 
-      - name: Download Backend Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-${{ matrix.os }}
-          path: app/resources/backend
+      - name: Install app dependencies
+        shell: pwsh
+        working-directory: app
+        run: npm ci
 
-      - name: Build Electron App
+      - name: Typecheck
+        shell: pwsh
+        working-directory: app
+        run: npx tsc
+
+      - name: Build renderer and main process
+        shell: pwsh
+        working-directory: app
+        env:
+          VISON_GOOGLE_CLIENT_ID: ${{ steps.auth.outputs.client_id }}
+        run: npx vite build
+
+      # vite-plugin-electron runs a separate build for the main process, so a
+      # define can reach the renderer and miss main.js. That shipped once.
+      # Check the artifact that actually carries the value.
+      - name: Verify the client ID reached the main-process bundle
+        if: steps.auth.outputs.configured == 'true'
+        shell: pwsh
         run: |
-          cd app
-          # Ensure you map the resources/backend inside your electron-builder config!
-          npm run build
-          
-      - name: Upload Final Application
+          if (-not (Select-String -Path 'app/dist-electron/main.js' -Pattern 'apps\.googleusercontent\.com' -Quiet)) {
+            throw "VISON_GOOGLE_CLIENT_ID did not reach app/dist-electron/main.js."
+          }
+          Write-Host 'Client ID is present in the main-process bundle.'
+
+      - name: Package installer
+        shell: pwsh
+        working-directory: app
+        env:
+          VISON_ALLOW_UNCONFIGURED_AUTH: ${{ steps.auth.outputs.allow_unconfigured }}
+        run: npx electron-builder --win --publish never
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: Vison-${{ matrix.os }}
-          path: app/dist/*.exe # Adjust based on mac/win extensions
+          name: Vison-Setup-windows${{ steps.auth.outputs.suffix }}
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+          if-no-files-found: error
+
+      # Worth having on its own: it is the thing to put next to a debugger when
+      # the installer works and generation does not.
+      - name: Upload backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: vison-backend-windows
+          path: |
+            build/bin/*.exe
+            build/bin/*.dll
+          if-no-files-found: error
+
+  publish:
+    name: Attach installer to the release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Vison-Setup-windows
+          path: dist
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber --repo "${{ github.repository }}"
