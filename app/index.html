@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>app</title>
+  </head>
+  <body>
+    <div id="error-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); color:red; z-index:9999; padding:20px; white-space:pre-wrap; font-family:monospace;"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        document.getElementById('error-overlay').style.display = 'block';
+        document.getElementById('error-overlay').innerText = 'Error: ' + e.message + '\n' + e.filename + ':' + e.lineno + '\n\n' + (e.error ? e.error.stack : '');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.getElementById('error-overlay').style.display = 'block';
+        document.getElementById('error-overlay').innerText = 'Unhandled Promise Rejection: ' + e.reason;
+      });
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

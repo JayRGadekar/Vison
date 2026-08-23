@@ -1,0 +1,101 @@
+cmake_minimum_required(VERSION 3.20)
+project(vison VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# All runtime artifacts (exe + every .dll) must land in ONE directory, otherwise
+# vison_server.exe cannot resolve ggml*.dll / visioncpp.dll at load time and
+# exits silently on Windows.
+set(VISON_RUNTIME_DIR ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${VISON_RUNTIME_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${VISON_RUNTIME_DIR})
+# Multi-config generators (Visual Studio) ignore the plain variable above and
+# append the config name, so pin every config explicitly to the same folder.
+foreach(cfg ${CMAKE_CONFIGURATION_TYPES} Debug Release RelWithDebInfo MinSizeRel)
+    string(TOUPPER ${cfg} cfg_upper)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${cfg_upper} ${VISON_RUNTIME_DIR})
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${cfg_upper} ${VISON_RUNTIME_DIR})
+endforeach()
+
+# Options
+option(VISON_CUDA    "Enable CUDA backend"    OFF)
+option(VISON_VULKAN  "Enable Vulkan backend"  OFF)
+option(VISON_METAL   "Enable Metal backend"   OFF)
+
+# Auto-detect CUDA.
+# NOTE: a CUDA_PATH env var pointing at a non-existent directory is a common
+# leftover from an uninstalled toolkit. Reject it explicitly so the build does
+# not silently fall back to CPU while appearing to have found CUDA.
+if(DEFINED ENV{CUDA_PATH} AND NOT EXISTS "$ENV{CUDA_PATH}")
+    message(WARNING "CUDA_PATH is set to '$ENV{CUDA_PATH}' but that directory does not exist. "
+                    "Ignoring it (stale uninstall leftover).")
+endif()
+
+# Vulkan is the preferred GPU backend: one build covers NVIDIA, AMD and Intel,
+# and end users need no runtime install because the ICD ships with their driver.
+# CUDA is faster on NVIDIA but is NVIDIA-only and drags in ~1-2GB of redistributable
+# DLLs, so it is opt-in via -DVISON_CUDA=ON rather than auto-detected.
+#
+# Building the Vulkan backend needs glslc (from the Vulkan SDK) to compile ggml's
+# compute shaders; the runtime loader alone is not enough.
+if(NOT VISON_CUDA AND NOT VISON_METAL AND NOT DEFINED VISON_VULKAN_CHECKED)
+    find_package(Vulkan QUIET COMPONENTS glslc)
+    if(Vulkan_FOUND AND Vulkan_glslc_FOUND)
+        message(STATUS "Vulkan SDK with glslc found. Enabling VISON_VULKAN automatically.")
+        set(VISON_VULKAN ON CACHE BOOL "" FORCE)
+    elseif(Vulkan_FOUND)
+        message(WARNING "Vulkan runtime found but glslc is missing. Install the Vulkan SDK "
+                        "(not just the runtime) to build the Vulkan backend. Falling back to CPU.")
+    endif()
+    set(VISON_VULKAN_CHECKED ON CACHE INTERNAL "")
+endif()
+
+if(VISON_VULKAN)
+    set(SD_VULKAN ON CACHE BOOL "" FORCE)
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    set(VISP_VULKAN ON CACHE BOOL "" FORCE)
+endif()
+
+if(VISON_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    set(SD_CUDA ON CACHE BOOL "" FORCE)
+    set(GGML_CUDA ON CACHE BOOL "" FORCE)
+endif()
+
+if(VISON_CUDA)
+    set(VISON_BACKEND_NAME "CUDA")
+elseif(VISON_VULKAN)
+    set(VISON_BACKEND_NAME "Vulkan")
+elseif(VISON_METAL)
+    set(VISON_BACKEND_NAME "Metal")
+else()
+    set(VISON_BACKEND_NAME "CPU")
+endif()
+message(STATUS "=== Vison compute backend: ${VISON_BACKEND_NAME} ===")
+
+# stable-diffusion.cpp needs GGML_MAX_NAME=128: FLUX tensor names such as
+# "text_encoders.clip_l.transformer.text_model.embeddings.token_embedding.weight"
+# are longer than ggml's 64-char default.
+#
+# It sets this itself via add_definitions(), but that only applies to its own
+# directory. vision.cpp is configured first here and its bundled ggml is the one
+# actually linked (stable-diffusion.cpp aliases onto it), so ggml would be built
+# with name[64] while SD's code assumes name[128] — an ABI mismatch that silently
+# truncates tensor names and breaks lookup ("tensor '...token_em' is not
+# registered", then GGML_ASSERT(!pooled.empty()) aborts the process).
+#
+# Setting it globally BEFORE any add_subdirectory keeps every target in agreement.
+add_compile_definitions(GGML_MAX_NAME=128)
+
+# Third-party
+add_subdirectory(third_party)
+
+# Core library
+add_subdirectory(core)
+
+# Pipelines
+add_subdirectory(pipelines)
+
+# Server
+add_subdirectory(server)

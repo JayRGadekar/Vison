@@ -1,0 +1,18 @@
+# ggml is usually included by stable-diffusion.cpp and vision.cpp
+# If they need to share it, we might need to add it here, but typically they use their own submodules.
+# For now we'll just add the main projects.
+
+if(VLLAMA_CUDA)
+    set(SD_CUDA ON CACHE BOOL "Enable CUDA in stable-diffusion.cpp" FORCE)
+    set(GGML_CUDA ON CACHE BOOL "Enable CUDA in ggml" FORCE)
+endif()
+
+add_subdirectory(vision.cpp)
+add_subdirectory(stable-diffusion.cpp)
+
+# Header-only libraries
+add_library(cpp-httplib INTERFACE)
+target_include_directories(cpp-httplib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cpp-httplib)
+
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nlohmann_json/include)

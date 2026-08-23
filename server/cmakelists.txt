@@ -1,0 +1,6 @@
+add_executable(vison_server
+    src/server.cpp
+)
+
+target_include_directories(vison_server PUBLIC include)
+target_link_libraries(vison_server PRIVATE vison_core vison_pipelines cpp-httplib nlohmann_json)

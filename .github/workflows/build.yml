@@ -1,0 +1,95 @@
+name: Build Vison Cross-Platform
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-backend:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            suffix: win.exe
+            arch: x64
+          - os: macos-latest
+            suffix: mac
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies (Windows - CUDA)
+        if: runner.os == 'Windows'
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+          pip install pyinstaller
+
+      - name: Install dependencies (Mac - Standard/MPS)
+        if: runner.os == 'macOS'
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install torch torchvision torchaudio
+          pip install pyinstaller
+
+      - name: Package Backend via PyInstaller
+        run: |
+          cd backend
+          pyinstaller backend.spec
+          
+      - name: Upload Backend Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.os }}
+          path: backend/dist/vison-backend/
+
+  build-frontend:
+    needs: build-backend
+    strategy:
+      matrix:  
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: './app/package.json'
+
+      - name: Install Dependencies
+        run: |
+          cd app
+          npm install
+
+      - name: Download Backend Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-${{ matrix.os }}
+          path: app/resources/backend
+
+      - name: Build Electron App
+        run: |
+          cd app
+          # Ensure you map the resources/backend inside your electron-builder config!
+          npm run build
+          
+      - name: Upload Final Application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vison-${{ matrix.os }}
+          path: app/dist/*.exe # Adjust based on mac/win extensions

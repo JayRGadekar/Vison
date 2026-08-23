@@ -1,0 +1,4 @@
+add_library(pipeline_video_generation STATIC src/video_gen.cpp)
+target_include_directories(pipeline_video_generation PUBLIC include ../common/include)
+# stb supplies the JPEG encoder used by save_image().
+target_link_libraries(pipeline_video_generation PRIVATE vison_core stable-diffusion visioncpp stb)

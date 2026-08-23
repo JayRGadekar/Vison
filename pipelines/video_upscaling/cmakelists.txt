@@ -1,0 +1,4 @@
+add_library(pipeline_video_upscaling STATIC src/video_upscale.cpp)
+target_include_directories(pipeline_video_upscaling PUBLIC include ../common/include)
+# stb supplies the JPEG encoder used by save_image().
+target_link_libraries(pipeline_video_upscaling PRIVATE vison_core visioncpp stb)

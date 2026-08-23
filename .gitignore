@@ -1,0 +1,63 @@
+# Python bytecode and envs
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Model and runtime caches
+backend/.vison_models/
+backend/cache/
+cache/
+
+# Node build/deps
+app/node_modules/
+frontend/node_modules/
+app/dist/
+app/dist-ssr/
+app/dist-electron/
+# electron-builder output: installer plus the unpacked app, ~500MB per build
+app/release/
+
+# Environment files
+.env
+*.env
+*.env.*
+
+# Logs and crash/debug outputs
+*.log
+backend/*.log
+DEBUG_LOG.txt
+crash_trace.txt
+error.txt
+uvicorn_out.txt
+*_out*.txt
+*output*.txt
+
+# Local debug helpers
+probe_backend.py
+
+# CMake build output
+build/
+build_probe/
+
+# Downloaded model weights: ~31 GB here, and every file is fetched on demand by
+# the registry in server/src/server.cpp. Nothing about them belongs in git.
+models/
+
+# Generated images and video
+outputs/
+
+# Vendored upstream clones. These are full git clones rather than submodules
+# (see PATCHES.md), so git can only record them as gitlinks pointing at commits
+# that carry none of our local patches. Ignoring them is the honest option:
+# scripts/bootstrap-third-party.sh reclones at the pinned commits and applies
+# third_party/patches/, which does reproduce the working tree.
+# cpp-httplib and nlohmann_json are plain vendored headers with no .git and stay tracked.
+third_party/stable-diffusion.cpp/
+third_party/vision.cpp/
+
+# Raw tensor-name dump from debugging FLUX detection. The part that mattered is
+# quoted in PATCHES.md; the dump itself is a scratch artifact.
+keys.txt

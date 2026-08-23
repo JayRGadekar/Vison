@@ -1,0 +1,13 @@
+add_subdirectory(image_generation)
+add_subdirectory(image_upscaling)
+add_subdirectory(video_generation)
+add_subdirectory(video_upscaling)
+
+add_library(vison_pipelines STATIC factory.cpp)
+target_link_libraries(vison_pipelines PUBLIC
+    vison_core
+    pipeline_image_generation
+    pipeline_image_upscaling
+    pipeline_video_generation
+    pipeline_video_upscaling
+)

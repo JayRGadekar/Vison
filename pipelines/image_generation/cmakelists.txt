@@ -1,0 +1,4 @@
+add_library(pipeline_image_generation STATIC src/image_gen.cpp)
+target_include_directories(pipeline_image_generation PUBLIC include ../common/include)
+# stb supplies the JPEG encoder; visp::image_save can only write PNG.
+target_link_libraries(pipeline_image_generation PRIVATE vison_core stable-diffusion visioncpp stb)

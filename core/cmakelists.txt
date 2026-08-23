@@ -1,0 +1,27 @@
+find_package(Threads REQUIRED)
+
+add_library(vison_core STATIC
+    src/vison.cpp
+    src/device.cpp
+    src/queue.cpp
+    src/download.cpp
+)
+
+target_include_directories(vison_core PUBLIC include)
+# ggml for real device enumeration in device.cpp. Only the generic
+# ggml-backend API is used (dev_count/description/memory), so this works for
+# whichever backends are actually built - it does not tie core to Vulkan.
+target_link_libraries(vison_core PUBLIC Threads::Threads ggml)
+
+if(WIN32)
+    # Native HTTPS downloads (replaces the old python scripts/download.py shell-out).
+    target_link_libraries(vison_core PUBLIC winhttp)
+endif()
+
+if(VISON_CUDA)
+    target_compile_definitions(vison_core PUBLIC VISON_CUDA)
+endif()
+
+if(VISON_VULKAN)
+    target_compile_definitions(vison_core PUBLIC VISON_VULKAN)
+endif()

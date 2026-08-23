@@ -1,0 +1,32 @@
+{
+  // Without this file, `npm run build` runs a bare `tsc`, which has no project
+  // to anchor to and starts walking the filesystem - it was compiling files out
+  // of the unrelated D:\Project\Vllama-2 folder and failing before Vite ever
+  // ran. `include` is what actually fixes the build; everything else is the
+  // usual Vite + React setup.
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    // Vite/esbuild emits the JavaScript; tsc is only here as a type gate.
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+
+    "types": ["node"]
+  },
+  "include": ["src", "electron"],
+  "exclude": ["node_modules", "dist", "dist-electron", "release"]
+}
