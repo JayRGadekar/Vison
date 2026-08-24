@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import visonLogo from './assets/icon.png';
 import { conversationTitle } from './conversation-title';
-import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History, LogOut } from 'lucide-react';
+import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History, LogOut, Search } from 'lucide-react';
 
 interface AuthUser {
   email: string;
@@ -27,9 +27,19 @@ declare global {
         load: (id: string) => Promise<{ success: boolean; chat?: any; error?: string }>;
         list: () => Promise<{ success: boolean; chats?: any[]; error?: string }>;
         delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+        search: (query: string) => Promise<{ success: boolean; results?: SearchHit[]; error?: string }>;
       };
     };
   }
+}
+
+// A conversation matching a search, with the matching text already split into
+// plain and highlighted runs by the main process.
+interface SearchHit {
+  id: string;
+  title: string;
+  timestamp: number;
+  parts: { text: string; match: boolean }[];
 }
 
 // What one generation cost on THIS machine.
@@ -196,6 +206,8 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [chatQuery, setChatQuery] = useState('');
+  const [chatResults, setChatResults] = useState<SearchHit[] | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   // Opening a conversation must not rewrite it.
@@ -497,6 +509,32 @@ function App() {
       setCurrentView('chat');
       setShowSettings(true);
     };
+
+    // Search runs in the main process against the FTS index, not over the
+    // conversations already in memory: the sidebar only ever holds titles, and
+    // the point is to find a conversation by something said inside it.
+    //
+    // Debounced because every keystroke is a query. 150ms is under the point
+    // where typing feels laggy and still collapses a burst of keystrokes into
+    // one query.
+    useEffect(() => {
+      const q = chatQuery.trim();
+      if (!q) { setChatResults(null); return; }
+
+      const api = window.vison?.chat;
+      if (!api?.search) { setChatResults([]); return; }
+
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        api.search(q).then(res => {
+          // A slower earlier query must not overwrite a newer one's results.
+          if (cancelled) return;
+          setChatResults(res.success && res.results ? res.results : []);
+        });
+      }, 150);
+
+      return () => { cancelled = true; clearTimeout(timer); };
+    }, [chatQuery, conversations]);
 
     // A menu that only closes by clicking its own button is a trap: every other
     // menu on the platform closes on an outside click or Escape, and one that
@@ -1296,17 +1334,75 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                <Plus className="w-4 h-4" />
             </button>
          </div>
-         <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
-            {conversations.map(c => (
-               <div key={c.id} onClick={() => loadConversation(c.id)} className={`group relative p-3 rounded-xl cursor-pointer transition-colors ${currentConversationId === c.id ? 'bg-[#303030] text-white' : 'hover:bg-[#2a2a2a] text-gray-400'}`}>
-                  <p className="text-sm truncate pr-6 font-medium">{c.title || "Image Generation"}</p>
-                  <p className="text-[10px] opacity-50 mt-1">{new Date(c.timestamp).toLocaleString()}</p>
-                  <button onClick={(e) => deleteConversation(e, c.id)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all bg-[#1e1e1e] group-hover:bg-[#2a2a2a] rounded">
-                     <Trash2 className="w-3.5 h-3.5" />
+         {/* Search runs over the full text of every conversation, not the
+             titles in this list - the whole point is to find a chat by
+             something said inside it. */}
+         <div className="px-3 pt-3 pb-1">
+            <div className="relative">
+               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+               <input
+                  type="text"
+                  value={chatQuery}
+                  onChange={e => setChatQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setChatQuery(''); }}
+                  placeholder="Search chats"
+                  aria-label="Search chats"
+                  className="w-full rounded-lg border border-transparent bg-[#2a2a2a] py-1.5 pl-8 pr-7 text-xs text-gray-200 placeholder:text-gray-500 outline-none transition-colors focus:border-[#4a4a4a] focus:bg-[#303030]"
+               />
+               {chatQuery && (
+                  <button
+                     type="button"
+                     onClick={() => setChatQuery('')}
+                     aria-label="Clear search"
+                     className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-gray-500 transition-colors hover:text-white"
+                  >
+                     <X className="h-3 w-3" />
                   </button>
-               </div>
-            ))}
-            {conversations.length === 0 && <p className="text-xs text-center text-gray-500 mt-4">No history yet</p>}
+               )}
+            </div>
+         </div>
+
+         <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
+            {chatResults === null ? (
+              <>
+                {conversations.map(c => (
+                   <div key={c.id} onClick={() => loadConversation(c.id)} className={`group relative p-3 rounded-xl cursor-pointer transition-colors ${currentConversationId === c.id ? 'bg-[#303030] text-white' : 'hover:bg-[#2a2a2a] text-gray-400'}`}>
+                      <p className="text-sm truncate pr-6 font-medium">{c.title || "Image Generation"}</p>
+                      <p className="text-[10px] opacity-50 mt-1">{new Date(c.timestamp).toLocaleString()}</p>
+                      <button onClick={(e) => deleteConversation(e, c.id)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all bg-[#1e1e1e] group-hover:bg-[#2a2a2a] rounded">
+                         <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                   </div>
+                ))}
+                {conversations.length === 0 && <p className="text-xs text-center text-gray-500 mt-4">No history yet</p>}
+              </>
+            ) : chatResults.length === 0 ? (
+              <p className="mt-4 text-center text-xs text-gray-500">No chats match “{chatQuery.trim()}”</p>
+            ) : (
+              <>
+                <p className="px-1 pb-1 text-[10px] uppercase tracking-wide text-gray-600">
+                   {chatResults.length} {chatResults.length === 1 ? 'match' : 'matches'}
+                </p>
+                {chatResults.map(hit => (
+                   <div key={hit.id} onClick={() => loadConversation(hit.id)} className={`group relative p-3 rounded-xl cursor-pointer transition-colors ${currentConversationId === hit.id ? 'bg-[#303030] text-white' : 'hover:bg-[#2a2a2a] text-gray-400'}`}>
+                      <p className="text-sm truncate pr-6 font-medium">{hit.title || "Image Generation"}</p>
+                      {hit.parts.length > 0 && (
+                         <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-gray-500">
+                            {hit.parts.map((part, i) =>
+                               part.match
+                                  ? <mark key={i} className="rounded bg-amber-400/20 px-0.5 text-amber-200">{part.text}</mark>
+                                  : <span key={i}>{part.text}</span>
+                            )}
+                         </p>
+                      )}
+                      <p className="text-[10px] opacity-50 mt-1">{new Date(hit.timestamp).toLocaleString()}</p>
+                      <button onClick={(e) => deleteConversation(e, hit.id)} className="absolute right-2 top-2 p-1.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all bg-[#1e1e1e] group-hover:bg-[#2a2a2a] rounded">
+                         <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                   </div>
+                ))}
+              </>
+            )}
          </div>
       </div>
 

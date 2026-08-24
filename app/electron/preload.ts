@@ -13,7 +13,8 @@ contextBridge.exposeInMainWorld('vison', {
     save: (chat: any) => ipcRenderer.invoke('chat:save', chat),
     load: (id: string) => ipcRenderer.invoke('chat:load', id),
     list: () => ipcRenderer.invoke('chat:list'),
-    delete: (id: string) => ipcRenderer.invoke('chat:delete', id)
+    delete: (id: string) => ipcRenderer.invoke('chat:delete', id),
+    search: (query: string) => ipcRenderer.invoke('chat:search', query)
   }
 });
 

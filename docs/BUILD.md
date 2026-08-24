@@ -287,6 +287,24 @@ marked experimental, so it prints a warning on first use and its API may change.
 The surface used is small enough that swapping in `better-sqlite3` would be a
 change to `chat-store.ts` alone.
 
+### Search
+
+The sidebar search box queries an FTS5 index over the full text of every
+conversation, not the titles held in the sidebar - the point is to find a chat
+by something said inside it.
+
+One index row per conversation, not per message: the result is a conversation
+to reopen, so ten hits inside one chat are one result. `save()` and `remove()`
+maintain it inside the same transaction as the write, and `open()` compares
+row counts and rebuilds if they differ - which covers databases written before
+search existed, and makes any future drift self-healing rather than permanent.
+
+What the user types never reaches `MATCH` unescaped. A stray quote, colon, or
+a bare `AND` is FTS5 syntax and would throw mid-keystroke, so each word is
+quoted as a phrase with a trailing `*` for prefix matching, and the words are
+ANDed. Anything that still fails to parse yields no results rather than an
+error.
+
 ```
 cd app && npm run test:chats
 ```

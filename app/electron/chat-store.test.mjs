@@ -161,6 +161,129 @@ t('data survives closing and reopening the database', () => {
 });
 store.close();
 
+// ---- search --------------------------------------------------------------
+const ud4 = path.join(root, 'ud4');
+fs.mkdirSync(ud4, { recursive: true });
+store.open(ud4);
+
+store.save({ id: 'chat_cube', title: 'A red cube', timestamp: 10, messages: [
+  { role: 'user', content: 'a red cube on a wooden table' },
+  { role: 'assistant', content: 'here is your cube' },
+]});
+store.save({ id: 'chat_cat', title: 'A cat', timestamp: 20, messages: [
+  { role: 'user', content: 'a fluffy cat sitting on a windowsill' },
+]});
+store.save({ id: 'chat_empty', title: 'Nothing', timestamp: 30, messages: [] });
+
+t('search finds a conversation by message text', () => {
+  const hits = store.search('wooden');
+  assert.strictEqual(hits.length, 1, 'got ' + hits.length);
+  assert.strictEqual(hits[0].id, 'chat_cube');
+});
+
+t('search matches a prefix, so it works mid-typing', () => {
+  assert.strictEqual(store.search('wind')[0]?.id, 'chat_cat');
+});
+
+t('a conversation matching many times is still one result', () => {
+  const hits = store.search('cube');
+  assert.strictEqual(hits.length, 1, 'expected 1 conversation, got ' + hits.length);
+});
+
+t('several words must all match', () => {
+  assert.strictEqual(store.search('red cube').length, 1);
+  assert.strictEqual(store.search('red windowsill').length, 0);
+});
+
+t('the snippet marks the match', () => {
+  const [hit] = store.search('wooden');
+  assert.ok(hit.snippet.includes(store.MATCH_START), 'no start marker');
+  assert.ok(hit.snippet.includes(store.MATCH_END), 'no end marker');
+  const marked = hit.snippet.slice(
+    hit.snippet.indexOf(store.MATCH_START) + 1,
+    hit.snippet.indexOf(store.MATCH_END));
+  assert.strictEqual(marked.toLowerCase(), 'wooden');
+});
+
+t('search is case-insensitive', () => {
+  assert.strictEqual(store.search('WOODEN')[0]?.id, 'chat_cube');
+});
+
+t('an empty or blank query returns nothing rather than everything', () => {
+  assert.deepStrictEqual(store.search(''), []);
+  assert.deepStrictEqual(store.search('   '), []);
+});
+
+t('FTS operators in the query are treated as text, not syntax', () => {
+  // Every one of these is a syntax error if handed to MATCH unescaped.
+  const nasty = ['"', 'cube OR cat', 'NOT cube', 'cube:', '*', '(cube', 'a AND', '^x', 'a-b'];
+  for (const q of nasty) {
+    assert.doesNotThrow(() => store.search(q), 'threw on ' + JSON.stringify(q));
+  }
+});
+
+t('a quoted phrase in the query still finds its conversation', () => {
+  assert.strictEqual(store.search('"wooden"')[0]?.id, 'chat_cube');
+});
+
+t('editing a conversation updates what search sees', () => {
+  store.save({ id: 'chat_cat', title: 'A cat', timestamp: 21, messages: [
+    { role: 'user', content: 'a dog instead' },
+  ]});
+  assert.strictEqual(store.search('windowsill').length, 0, 'stale text still matches');
+  assert.strictEqual(store.search('dog')[0]?.id, 'chat_cat');
+});
+
+t('a deleted conversation leaves the index too', () => {
+  store.remove('chat_cube');
+  assert.strictEqual(store.search('wooden').length, 0, 'deleted chat still in search');
+});
+
+t('reopening keeps the index usable', () => {
+  store.close();
+  store.open(ud4);
+  assert.strictEqual(store.search('dog').length, 1);
+});
+
+store.close();
+
+// ---- the index is rebuilt when it drifts ----------------------------------
+// Stands in for a database written before search existed, where the tables are
+// populated and the index is empty.
+const ud6 = path.join(root, 'ud6');
+fs.mkdirSync(ud6, { recursive: true });
+store.open(ud6);
+store.save({ id: 'chat_drift', title: 'Drift', timestamp: 5, messages: [
+  { role: 'user', content: 'a lighthouse in a storm' },
+]});
+store.close();
+
+const { DatabaseSync } = await import('node:sqlite');
+const raw = new DatabaseSync(path.join(ud6, 'chats.db'));
+raw.exec('DELETE FROM chat_search');
+raw.close();
+
+store.open(ud6);
+t('an empty index is rebuilt on open', () => {
+  assert.strictEqual(store.search('lighthouse')[0]?.id, 'chat_drift');
+});
+store.close();
+
+// ---- search survives the legacy import ------------------------------------
+const ud5 = path.join(root, 'ud5');
+const legacy5 = path.join(ud5, 'chats');
+fs.mkdirSync(legacy5, { recursive: true });
+fs.writeFileSync(path.join(legacy5, 'chat_old.json'), JSON.stringify({
+  id: 'chat_old', title: 'Imported', timestamp: 1,
+  messages: [{ role: 'user', content: 'an imported conversation about mountains' }],
+}));
+store.open(ud5);
+await store.importLegacyJson(ud5);
+t('imported conversations are searchable', () => {
+  assert.strictEqual(store.search('mountains')[0]?.id, 'chat_old');
+});
+store.close();
+
 console.log(`\n${pass} passed, ${fail} failed`);
 fs.rmSync(root, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

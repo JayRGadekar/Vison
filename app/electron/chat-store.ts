@@ -105,12 +105,95 @@ function schema(handle: DatabaseSync) {
       value TEXT NOT NULL
     )
   `);
+
+  // One FTS row per conversation, not per message: the sidebar is looking for
+  // the conversation to reopen, so ten hits inside one chat should be one
+  // result, not ten. body is every message's text concatenated.
+  //
+  // Kept in step by save() and remove() inside the same transaction, rather
+  // than by triggers. Triggers over an external-content table are the usual
+  // approach and are more code than this earns at local scale - and a rebuild
+  // on open (see ensureSearchIndex) makes a drift bug self-healing instead of
+  // permanent.
+  handle.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS chat_search USING fts5(
+      chat_id UNINDEXED,
+      title,
+      body,
+      tokenize = 'unicode61'
+    )
+  `);
+}
+
+// Markers around a match inside a snippet, for the renderer to split on and
+// wrap in <mark>. Control characters rather than something like [ ] or <b>:
+// a prompt can contain any printable text, so a marker made of ordinary
+// characters would sometimes highlight the user's own words - and an HTML
+// marker would be a way to get markup out of a prompt and into the sidebar.
+export const MATCH_START = '\u0002';
+export const MATCH_END = '\u0003';
+
+function searchBody(messages: ChatMessage[]): string {
+  return messages
+    .map(m => (typeof m?.content === 'string' ? m.content : ''))
+    .filter(Boolean)
+    .join('\n');
+}
+
+function reindex(handle: DatabaseSync, chat: Chat, messages: ChatMessage[]) {
+  handle.prepare('DELETE FROM chat_search WHERE chat_id = ?').run(chat.id);
+  handle.prepare(
+    'INSERT INTO chat_search (chat_id, title, body) VALUES (?, ?, ?)'
+  ).run(chat.id, String(chat.title ?? ''), searchBody(messages));
+}
+
+// Rebuilds the index when it does not match the conversations.
+//
+// The index arrived after the tables did, so an existing database has chats
+// and an empty index; a crash between the two writes of a save could also
+// leave them out of step. Comparing counts on open and rebuilding costs
+// nothing at this scale and means neither case turns into search that quietly
+// misses conversations.
+function ensureSearchIndex(handle: DatabaseSync) {
+  const chats = (handle.prepare('SELECT count(*) AS n FROM chats').get() as { n: number }).n;
+  const indexed = (handle.prepare('SELECT count(*) AS n FROM chat_search').get() as { n: number }).n;
+  if (chats === indexed) return;
+
+  handle.exec('DELETE FROM chat_search');
+  const rows = handle.prepare('SELECT id, title FROM chats').all() as
+    { id: string; title: string }[];
+  const insert = handle.prepare(
+    'INSERT INTO chat_search (chat_id, title, body) VALUES (?, ?, ?)');
+  const messagesFor = handle.prepare(
+    'SELECT content FROM messages WHERE chat_id = ? ORDER BY seq ASC');
+
+  for (const row of rows) {
+    const contents = (messagesFor.all(row.id) as { content: string | null }[])
+      .map(r => r.content ?? '')
+      .filter(Boolean)
+      .join('\n');
+    insert.run(row.id, row.title ?? '', contents);
+  }
+}
+
+// Turns what someone typed into an FTS5 query.
+//
+// User input cannot go to MATCH unescaped: a stray quote, a colon, or a bare
+// "AND" is FTS5 syntax, and the search box would throw instead of finding
+// anything. Each word becomes a quoted phrase - which disarms every operator -
+// with a trailing * so "cub" finds "cube" while the user is still typing.
+// Words are ANDed, which is what people expect from a search box.
+export function toMatchQuery(input: string): string | null {
+  const words = input.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  return words.map(w => `"${w.replace(/"/g, '""')}"*`).join(' ');
 }
 
 export function open(userDataDir: string): DatabaseSync {
   if (db) return db;
   const handle = new DatabaseSync(path.join(userDataDir, 'chats.db'));
   schema(handle);
+  ensureSearchIndex(handle);
   db = handle;
   return db;
 }
@@ -153,6 +236,8 @@ export function save(chat: Chat): void {
       insert.run(chat.id, i, role, content, JSON.stringify(m ?? {}));
     });
 
+    reindex(handle, chat, messages);
+
     handle.exec('COMMIT');
   } catch (err) {
     try { handle.exec('ROLLBACK'); } catch { /* transaction already gone */ }
@@ -192,7 +277,68 @@ export function remove(id: string): void {
   const handle = requireDb();
   if (!isValidChatId(id)) throw new Error(`Invalid chat id: ${String(id)}`);
   // ON DELETE CASCADE clears the messages, which is why foreign_keys is on.
+  // The FTS table is virtual, so no foreign key reaches it - a deleted
+  // conversation left in the index would keep turning up in search results
+  // and fail to open.
   handle.prepare('DELETE FROM chats WHERE id = ?').run(id);
+  handle.prepare('DELETE FROM chat_search WHERE chat_id = ?').run(id);
+}
+
+export interface ChatSearchHit extends ChatSummary {
+  // The matching text with MATCH_START/MATCH_END around the hit.
+  snippet: string;
+}
+
+// Conversations matching `input`, best first.
+//
+// Ranked by bm25 rather than by date: someone typing into a search box wants
+// the closest match, and the date is on every row already for the times they
+// wanted recency instead.
+export function search(input: string, limit = 50): ChatSearchHit[] {
+  const handle = requireDb();
+  const match = toMatchQuery(input);
+  if (!match) return [];
+
+  // FTS5 can still raise on input that survives quoting. A search box must
+  // never throw at someone mid-keystroke, so an unparseable query is simply no
+  // results.
+  try {
+    return handle.prepare(`
+      SELECT c.id, c.title, c.timestamp,
+             snippet(chat_search, 2, ?, ?, '...', 12) AS snippet
+      FROM chat_search s
+      JOIN chats c ON c.id = s.chat_id
+      WHERE chat_search MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(MATCH_START, MATCH_END, match, limit) as unknown as ChatSearchHit[];
+  } catch {
+    return [];
+  }
+}
+
+// Splits a snippet into plain and matched runs, so the renderer can highlight
+// without ever handling the marker characters - or having to agree with this
+// file about what they are.
+export function snippetParts(snippet: string): { text: string; match: boolean }[] {
+  const parts: { text: string; match: boolean }[] = [];
+  let rest = snippet;
+  while (rest.length) {
+    const start = rest.indexOf(MATCH_START);
+    if (start === -1) { parts.push({ text: rest, match: false }); break; }
+    if (start > 0) parts.push({ text: rest.slice(0, start), match: false });
+
+    const end = rest.indexOf(MATCH_END, start);
+    if (end === -1) {
+      // Unbalanced markers should not be possible, but dropping the rest of the
+      // line would be a worse answer than showing it unhighlighted.
+      parts.push({ text: rest.slice(start + 1), match: false });
+      break;
+    }
+    parts.push({ text: rest.slice(start + 1, end), match: true });
+    rest = rest.slice(end + 1);
+  }
+  return parts.filter(p => p.text.length > 0);
 }
 
 function metaGet(key: string): string | null {
@@ -277,6 +423,7 @@ export function openAt(file: string): DatabaseSync {
   fsSync.mkdirSync(path.dirname(file), { recursive: true });
   const handle = new DatabaseSync(file);
   schema(handle);
+  ensureSearchIndex(handle);
   db = handle;
   return db;
 }

@@ -118,6 +118,26 @@ ipcMain.handle('chat:list', async () => {
   }
 });
 
+ipcMain.handle('chat:search', async (_event, query: string) => {
+  try {
+    await ensureChatStore();
+    const hits = chatStore.search(String(query ?? ''));
+    // The snippet is split here rather than in the renderer, so the marker
+    // characters never leave the main process.
+    return {
+      success: true,
+      results: hits.map(h => ({
+        id: h.id,
+        title: h.title,
+        timestamp: h.timestamp,
+        parts: chatStore.snippetParts(h.snippet ?? ''),
+      })),
+    };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
 ipcMain.handle('chat:delete', async (_event, id: string) => {
   try {
     await ensureChatStore();
