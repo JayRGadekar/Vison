@@ -1,0 +1,21 @@
+# Puts a "Sponsor" button at the top of the repository.
+#
+# Only entries that are actually set up do anything: an unenrolled or wrong
+# handle is ignored by GitHub rather than showing a broken link, so an entry
+# here is not proof the platform is live. Check the button appears after
+# pushing this.
+#
+# github: needs enrolment at https://github.com/sponsors - free, no fees taken,
+# but it asks for identity and bank/Stripe details and takes a few days.
+#
+# The others are commented out. Uncomment whichever you set up, with your own
+# handle. ko_fi is the quickest to get running if you want something today.
+
+github: [JayRGadekar]
+
+# ko_fi: your-handle              # https://ko-fi.com
+# buy_me_a_coffee: your-handle    # https://buymeacoffee.com
+# open_collective: your-project   # https://opencollective.com
+# liberapay: your-handle          # https://liberapay.com
+# polar: your-handle              # https://polar.sh
+# custom: ["https://example.com/donate"]

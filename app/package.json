@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local image and video generation",
-  "author": "Jay",
+  "author": "Jay Gadekar",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -91,5 +91,11 @@
       }
     ],
     "beforePack": "./scripts/check-ffmpeg-license.cjs"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JayRGadekar/Vison.git"
+  },
+  "homepage": "https://github.com/JayRGadekar/Vison"
 }
