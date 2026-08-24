@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import visonLogo from './assets/icon.png';
 import { conversationTitle } from './conversation-title';
-import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History } from 'lucide-react';
+import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History, LogOut } from 'lucide-react';
 
 interface AuthUser {
   email: string;
@@ -195,6 +195,8 @@ function App() {
   const [conversations, setConversations] = useState<{id: string, title: string, timestamp: number}[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
 
   // Opening a conversation must not rewrite it.
   //
@@ -272,7 +274,13 @@ function App() {
         // Only reachable without the preload bridge, which the packaged app
         // always has; it is not a way around the gate in a shipped build.
         setAuthRequired(false);
-        setAuthUser(null);
+        // A placeholder identity rather than null, so the signed-in chrome -
+        // the account menu in the header - is actually visible to whoever is
+        // looking at the UI. With null it rendered nothing, which meant the
+        // one tool for inspecting the UI could not show a whole corner of it.
+        // Same reachability as the lines around it: no preload bridge, which a
+        // packaged build always has.
+        setAuthUser({ email: 'dev@localhost', name: 'Dev Preview' });
         setAuthConfigured(false);
         return;
       }
@@ -480,6 +488,38 @@ function App() {
       setMessages([]);
       setCurrentView('chat');
     };
+
+    // The settings panel lives in the chat view, so reaching it from the
+    // account menu has to bring the view along - otherwise the item does
+    // nothing at all from the library.
+    const openSettingsFromMenu = () => {
+      setShowAccountMenu(false);
+      setCurrentView('chat');
+      setShowSettings(true);
+    };
+
+    // A menu that only closes by clicking its own button is a trap: every other
+    // menu on the platform closes on an outside click or Escape, and one that
+    // does not feels broken rather than deliberate.
+    useEffect(() => {
+      if (!showAccountMenu) return;
+
+      const onPointerDown = (e: MouseEvent) => {
+        if (!accountMenuRef.current?.contains(e.target as Node)) setShowAccountMenu(false);
+      };
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setShowAccountMenu(false);
+      };
+
+      // Capture phase, so a click on a control that stops propagation still
+      // dismisses the menu rather than leaving it stranded over the new view.
+      document.addEventListener('mousedown', onPointerDown, true);
+      document.addEventListener('keydown', onKeyDown);
+      return () => {
+        document.removeEventListener('mousedown', onPointerDown, true);
+        document.removeEventListener('keydown', onKeyDown);
+      };
+    }, [showAccountMenu]);
 
   useEffect(() => {
     if (isConnected) {
@@ -1149,7 +1189,20 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       )}
 
       {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-[#343434] select-none z-50 relative bg-[#181818]" style={{ WebkitAppRegion: 'drag' } as any}>
+        <header className="flex items-center justify-between pl-6 py-4 border-b border-[#343434] select-none z-50 relative bg-[#181818]"
+                style={{
+                  WebkitAppRegion: 'drag',
+                  // main.ts uses titleBarStyle 'hidden' with a titleBarOverlay, so
+                  // Windows paints minimise/maximise/close ON TOP of the top-right
+                  // of the page. Anything the header puts there is unreachable and
+                  // half-hidden - which is exactly what happened to the sign-out
+                  // button. Chromium exposes the strip it reserved as
+                  // env(titlebar-area-*); the fallback is the default Windows
+                  // control width, for the case where those are unavailable.
+                  paddingRight:
+                    'calc(100vw - env(titlebar-area-width, calc(100vw - 138px))' +
+                    ' - env(titlebar-area-x, 0px) + 12px)',
+                } as any}>
           <div className="flex items-center gap-4 text-gray-400" style={{ WebkitAppRegion: 'no-drag' } as any}>
             <span title="Toggle Chat History" className="inline-flex">
               <History
@@ -1181,23 +1234,56 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               this block dereferenced authUser unconditionally and crashed the
               whole app the moment the gate could be skipped. */}
           {authUser && (
-            <div className="flex items-center gap-2 text-xs text-gray-400"
+            <div className="relative" ref={accountMenuRef}
                  style={{ WebkitAppRegion: 'no-drag' } as any}>
-              {authUser.picture && (
-                <img src={authUser.picture} alt="" className="h-6 w-6 rounded-full"
-                     onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-              )}
-              <span className="max-w-[16ch] truncate" title={authUser.email}>
-                {authUser.name || authUser.email}
-              </span>
               <button
                 type="button"
-                onClick={handleSignOut}
-                className="rounded-md px-2 py-1 text-gray-500 transition-colors hover:bg-[#2c2c2c] hover:text-white"
-                title="Sign out"
+                onClick={() => setShowAccountMenu(v => !v)}
+                aria-haspopup="menu"
+                aria-expanded={showAccountMenu}
+                title={authUser.email}
+                className={`flex items-center gap-2 rounded-full py-1 pl-1 pr-2 text-xs transition-colors ${
+                  showAccountMenu ? 'bg-[#2c2c2c] text-white' : 'text-gray-400 hover:bg-[#2c2c2c] hover:text-white'}`}
               >
-                Sign out
+                {authUser.picture ? (
+                  <img src={authUser.picture} alt="" className="h-7 w-7 rounded-full object-cover"
+                       onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#3a3a3a] text-[11px] font-medium text-gray-200">
+                    {(authUser.name || authUser.email || '?').trim().charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <span className="max-w-[14ch] truncate font-medium">{authUser.name || authUser.email}</span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
               </button>
+
+              {showAccountMenu && (
+                <div role="menu"
+                     className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
+                  <div className="border-b border-[#343434] px-3 py-2.5">
+                    <p className="truncate text-sm font-medium text-gray-100">{authUser.name || 'Signed in'}</p>
+                    <p className="truncate text-xs text-gray-500" title={authUser.email}>{authUser.email}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={openSettingsFromMenu}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-white"
+                  >
+                    <Settings className="h-4 w-4 shrink-0" />
+                    Settings
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setShowAccountMenu(false); handleSignOut(); }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-red-400"
+                  >
+                    <LogOut className="h-4 w-4 shrink-0" />
+                    Sign out
+                  </button>
+                </div>
+              )}
             </div>
           )}
       </header>
