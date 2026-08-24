@@ -111,6 +111,25 @@ skipped.
 | Signed out again after a week | App left in Testing mode (step 4). |
 | "Sign-in is not configured" | No client ID in the build — this build predates the packaging gate, or `VISON_ALLOW_UNCONFIGURED_AUTH=1` was set. |
 
+## 8. Give CI the same client ID
+
+The workflow in `.github/workflows/build.yml` builds installers too, and it
+cannot read your shell. Set the ID once in the repository:
+
+**Settings → Secrets and variables → Actions → Variables → New repository
+variable**, named `VISON_GOOGLE_CLIENT_ID`, with the same value.
+
+A *variable*, not a secret. A client ID is a public identifier — it ships inside
+every installer and is readable by anyone who unpacks one — and masking it in
+the logs only makes a failed build harder to read. The workflow does check
+`secrets.VISON_GOOGLE_CLIENT_ID` as a fallback if you prefer it there anyway.
+
+Until it is set, CI still builds on every push, but the installer is named
+`Vison-Setup-windows-UNCONFIGURED` and shows "Sign-in is not configured" —
+useful as a compile check, useless to a user. Publishing a **release** without
+it fails the build outright, which is the one case where an unusable installer
+would reach people who trust it.
+
 ## Making it your own later
 
 To rotate the ID, create a new client and rebuild — nothing in the app is
