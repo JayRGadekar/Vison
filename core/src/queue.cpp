@@ -207,6 +207,25 @@ void TaskQueue::drop_cached_pipeline() {
     cached_load_signature_.clear();
 }
 
+// Hands a result back to whoever queued the task, and never lets an exception
+// out. on_complete belongs to the server layer, and this runs on the worker
+// thread: an exception that escapes worker_loop escapes the thread function
+// itself, which is an immediate std::terminate with no unwinding and no
+// message. That is the shape of the silent death this queue exists to survive
+// - the process would go down still holding the dead GPU context, and the
+// device-loss recovery below would never get to run.
+static void notify(const Task& task, const GenerateResult& result) {
+    if (!task.on_complete) return;
+    try {
+        task.on_complete(result);
+    } catch (const std::exception& e) {
+        std::cerr << "[Queue] Completion callback threw, ignoring: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[Queue] Completion callback threw a non-standard exception, ignoring."
+                  << std::endl;
+    }
+}
+
 void TaskQueue::worker_loop() {
     while (running_) {
         Task task;
@@ -318,9 +337,18 @@ void TaskQueue::worker_loop() {
             auto end = std::chrono::steady_clock::now();
             result.elapsed_seconds = std::chrono::duration<double>(end - start).count();
 
-            if (task.on_complete) task.on_complete(result);
+            notify(task, result);
         } catch (const std::exception& e) {
-            if (task.on_complete) task.on_complete({false, "", e.what(), 0});
+            notify(task, {false, "", e.what(), 0});
+        } catch (...) {
+            // run_once already folds everything it can see into a failed
+            // result, so nothing should reach here. "Should not" is not
+            // "cannot", though, and the cost of being wrong is not this one
+            // task - it is the whole server, killed with no log line, which is
+            // precisely the failure that took a long time to diagnose. A
+            // non-std exception from ggml, a throwing allocator, or a callback
+            // that raised something exotic all land here instead.
+            notify(task, {false, "", "Unknown fatal error while running the task", 0});
         }
     }
 }

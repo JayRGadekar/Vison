@@ -423,6 +423,11 @@ static std::string describe_failure(const char* generic) {
             if (p->params->on_progress) p->params->on_progress(step, steps);
         }, &pdata);
 
+        // Stand in for a GPU that dies here, when asked to. See
+        // simulate_backend_failure_if_requested() - video is the pipeline where
+        // a real device loss is most likely, since it decodes many frames.
+        simulate_backend_failure_if_requested(params.vram_backoff);
+
         sd_image_t* frames = nullptr;
         int num_frames = 0;
         sd_audio_t* audio = nullptr;

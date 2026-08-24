@@ -409,6 +409,11 @@ static std::string describe_failure(const char* generic) {
                 p->params->on_progress(step, steps);
             }
         }, &pdata);
+        // Stand in for a GPU that dies here, when asked to. Placed immediately
+        // before the real call so the model is loaded and the cached context is
+        // live - the state the recovery path actually has to cope with.
+        simulate_backend_failure_if_requested(params.vram_backoff);
+
         sd_image_t* images = nullptr;
         int num_images = 0;
         bool gen_success = generate_image(sd_ctx_, &gen_params, &images, &num_images);

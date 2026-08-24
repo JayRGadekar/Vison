@@ -256,3 +256,28 @@ reach users.
 | `VISON_FFMPEG` | Explicit path to the muxer. |
 | `VISON_BACKEND_SPEC`, `VISON_MAX_VRAM`, `VISON_VRAM_PROFILE` | Override the automatic backend plan. |
 | `VISON_GOOGLE_CLIENT_ID` | OAuth client ID; overrides the baked-in value. |
+| `VISON_SIMULATE_DEVICE_LOSS=N`, `VISON_SIMULATE_OOM=N` | Testing only. Fail every generation whose `vram_backoff` is below `N`, as though the GPU had been reset or run out of memory. `N=1` fails the first attempt and lets the retry succeed; a large `N` exercises the give-up path. See below. |
+
+### Exercising the GPU-failure recovery
+
+A real device loss needs the driver watchdog to fire mid-submit, which no test
+can arrange on demand — so the recovery path in `TaskQueue::worker_loop` went a
+long time without ever being watched to run. These two variables inject the
+failure at the point a real one occurs, using the driver's own error strings, so
+it travels the same `is_device_lost_error()` route as the genuine article:
+
+```powershell
+# First attempt dies, retry succeeds -> a real image comes back.
+$env:VISON_SIMULATE_DEVICE_LOSS = "1";  .\build\bin\vison_server.exe
+
+# Every attempt dies -> the give-up message, and the server stays up.
+$env:VISON_SIMULATE_DEVICE_LOSS = "99"; .\build\bin\vison_server.exe
+
+# OOM escalates through three backoff levels rather than one.
+$env:VISON_SIMULATE_OOM = "99";         .\build\bin\vison_server.exe
+```
+
+Expect `[Queue] GPU device lost ... discarding the cached model`, then
+`[Queue] Retrying at VRAM backoff level N`, and — the part that matters — a
+`200` from `/api/system` afterwards. Unset, the check costs two `getenv` calls
+per generation.

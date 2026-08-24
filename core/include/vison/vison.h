@@ -5,6 +5,8 @@
 #include <memory>
 #include <map>
 #include <cctype>
+#include <cstdlib>
+#include <stdexcept>
 
 namespace vison {
 
@@ -56,6 +58,41 @@ inline bool is_out_of_memory_error(const std::string& message) {
            lower.find("failed to allocate") != std::string::npos ||
            lower.find("alloc compute buffer failed") != std::string::npos ||
            lower.find("out of memory") != std::string::npos;
+}
+
+// Fault injection for the GPU-failure recovery path.
+//
+// A real device loss needs the driver's watchdog to fire mid-submit, which no
+// test can arrange on demand. That is how the recovery code in
+// TaskQueue::worker_loop came to be trusted without ever being watched to run:
+// the one time it mattered the process died first, so the retry was theory.
+//
+// VISON_SIMULATE_DEVICE_LOSS=N fails every attempt whose vram_backoff is below
+// N as though the GPU had been reset; VISON_SIMULATE_OOM=N does the same with
+// an out-of-memory failure. N=1 fails the first attempt and lets the first
+// retry through - the case worth proving, because it exercises dropping the
+// dead context, reloading, and succeeding. A large N proves the give-up path
+// and, more importantly, that the server is still answering afterwards.
+//
+// The messages are the real ones verbatim, so they travel the same
+// is_device_lost_error()/is_out_of_memory_error() route as a genuine failure
+// rather than a special case that only exists for tests. Unset - the normal
+// case - this costs two getenv calls per generation.
+inline void simulate_backend_failure_if_requested(int vram_backoff) {
+    if (const char* env = std::getenv("VISON_SIMULATE_DEVICE_LOSS")) {
+        if (vram_backoff < std::atoi(env)) {
+            throw std::runtime_error(
+                "vk::Device::waitForFences: ErrorDeviceLost"
+                " [simulated: VISON_SIMULATE_DEVICE_LOSS]");
+        }
+    }
+    if (const char* env = std::getenv("VISON_SIMULATE_OOM")) {
+        if (vram_backoff < std::atoi(env)) {
+            throw std::runtime_error(
+                "vk::Device::allocateMemory: ErrorOutOfDeviceMemory"
+                " [simulated: VISON_SIMULATE_OOM]");
+        }
+    }
 }
 
 struct DeviceInfo {
