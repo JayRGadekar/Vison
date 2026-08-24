@@ -106,7 +106,8 @@ skipped.
 
 | What you see | Cause |
 |---|---|
-| `redirect_uri_mismatch` | Client type is Web application, not Desktop app (step 5). Create a new client; the type cannot be changed. |
+| `client_secret is missing` (400 from `/token`, after the browser flow succeeds) | Client type is **Web application**, not Desktop app (step 5). A Web client is confidential, so Google demands a secret at the token exchange — and a desktop app must never ship one. This is the usual symptom of the wrong type, not `redirect_uri_mismatch`: Google ignores the port when matching loopback redirect URIs, so the browser half of the flow completes and only the token exchange fails. Create a new client; the type cannot be changed. |
+| `redirect_uri_mismatch` | Also a wrong client type, when the loopback URI is not registered at all. Same fix. |
 | `access_blocked` / "app has not completed verification" | Consent screen is incomplete, or a sensitive scope crept in (step 3). |
 | Signed out again after a week | App left in Testing mode (step 4). |
 | "Sign-in is not configured" | No client ID in the build — this build predates the packaging gate, or `VISON_ALLOW_UNCONFIGURED_AUTH=1` was set. |
