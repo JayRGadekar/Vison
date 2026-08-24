@@ -7,6 +7,7 @@ import http from 'http';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 import { signIn, signOut, currentUser, getClientId, getClientSecret } from './auth';
+import * as chatStore from './chat-store';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,56 +36,38 @@ app.commandLine.appendSwitch('disable-gpu-cache'); // extra safety
 const gpuCachePath = path.join(app.getPath('userData'), 'GPUCache');
 fs.rm(gpuCachePath, { recursive: true, force: true }).catch(() => {});
 
-async function getChatDir() {
-  const dir = path.join(app.getPath('userData'), 'chats');
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
-
-// Chat ids arrive over the IPC bridge from the renderer, so they must never be
-// pasted into a path unchecked - an id like "../../config" would let a save or
-// a delete escape the chats directory. Ids we mint look like "chat_1699999999",
-// so anything outside that alphabet is rejected rather than sanitised.
-function chatFileName(id: unknown): string | null {
-  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return null;
-  return `${id}.json`;
-}
-
-// Earlier builds wrote every chat to a file literally named ".json" (the id was
-// missing from the template string), so each save clobbered the previous one.
-// Rename that leftover to its real id the first time we see it, otherwise the
-// user's most recent conversation would be listed but never load.
+// Chat history lives in SQLite (userData/chats.db). See electron/chat-store.ts
+// for why, and for the one-time import of the old per-conversation JSON files.
 //
-// This never deletes anything: a legacy file we cannot place - unreadable, no
-// usable id, or an id that already has a real file - is left exactly where it
-// is. chat:list skips it either way, so leaving it costs one small read per
-// listing, which is a better trade than throwing away conversation history we
-// merely failed to understand.
-async function migrateLegacyChatFile(dir: string) {
-  const legacy = path.join(dir, '.json');
-  try {
-    const chat = JSON.parse(await fs.readFile(legacy, 'utf-8'));
-    const name = chatFileName(chat?.id);
-    if (!name) return;
+// The IPC contract is unchanged - the renderer still sends and receives whole
+// {id, title, timestamp, messages} objects - so nothing in App.tsx had to move.
+let chatStoreReady: Promise<void> | null = null;
 
-    const target = path.join(dir, name);
-    try {
-      await fs.access(target);
-      return;                    // a real file already holds this id; leave the leftover alone
-    } catch {
-      await fs.rename(legacy, target);
-    }
-  } catch {
-    // No legacy file, or it is unreadable - nothing to migrate.
+function ensureChatStore(): Promise<void> {
+  if (!chatStoreReady) {
+    chatStoreReady = (async () => {
+      const userData = app.getPath('userData');
+      chatStore.open(userData);
+      const result = await chatStore.importLegacyJson(userData);
+      if (!result.alreadyDone && (result.imported || result.skipped)) {
+        console.log(
+          `[chats] imported ${result.imported} conversation(s) from JSON` +
+          (result.skipped ? `, skipped ${result.skipped} unreadable` : ''));
+      }
+    })().catch(err => {
+      // Reset so a later call retries rather than being stuck on a failed
+      // promise for the rest of the session.
+      chatStoreReady = null;
+      throw err;
+    });
   }
+  return chatStoreReady;
 }
 
 ipcMain.handle('chat:save', async (_event, chat: any) => {
   try {
-    const name = chatFileName(chat?.id);
-    if (!name) return { success: false, error: `Invalid chat id: ${String(chat?.id)}` };
-    const dir = await getChatDir();
-    await fs.writeFile(path.join(dir, name), JSON.stringify(chat, null, 2));
+    await ensureChatStore();
+    chatStore.save(chat);
     return { success: true };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -93,12 +76,10 @@ ipcMain.handle('chat:save', async (_event, chat: any) => {
 
 ipcMain.handle('chat:load', async (_event, id: string) => {
   try {
-    const name = chatFileName(id);
-    if (!name) return { success: false, error: `Invalid chat id: ${String(id)}` };
-    const dir = await getChatDir();
-    await migrateLegacyChatFile(dir);
-    const data = await fs.readFile(path.join(dir, name), 'utf-8');
-    return { success: true, chat: JSON.parse(data) };
+    await ensureChatStore();
+    const chat = chatStore.load(id);
+    if (!chat) return { success: false, error: `No such chat: ${String(id)}` };
+    return { success: true, chat };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -130,23 +111,8 @@ ipcMain.handle('app:notices', async () => {
 
 ipcMain.handle('chat:list', async () => {
   try {
-    const dir = await getChatDir();
-    await migrateLegacyChatFile(dir);
-    const files = await fs.readdir(dir);
-    const chats = [];
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        try {
-          const data = await fs.readFile(path.join(dir, file), 'utf-8');
-          const chat = JSON.parse(data);
-          // A chat with no usable id can never be loaded or deleted again, so
-          // leave it out of the list rather than showing a dead entry.
-          if (!chatFileName(chat?.id)) continue;
-          chats.push({ id: chat.id, title: chat.title, timestamp: chat.timestamp });
-        } catch (e) {}
-      }
-    }
-    return { success: true, chats: chats.sort((a: any, b: any) => b.timestamp - a.timestamp) };
+    await ensureChatStore();
+    return { success: true, chats: chatStore.list() };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -154,10 +120,8 @@ ipcMain.handle('chat:list', async () => {
 
 ipcMain.handle('chat:delete', async (_event, id: string) => {
   try {
-    const name = chatFileName(id);
-    if (!name) return { success: false, error: `Invalid chat id: ${String(id)}` };
-    const dir = await getChatDir();
-    await fs.unlink(path.join(dir, name));
+    await ensureChatStore();
+    chatStore.remove(id);
     return { success: true };
   } catch (err) {
     return { success: false, error: String(err) };

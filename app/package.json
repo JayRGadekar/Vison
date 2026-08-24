@@ -13,7 +13,8 @@
     "dev:electron": "vite build && electron .",
     "package": "npm run build",
     "check:ffmpeg": "node scripts/check-ffmpeg-license.cjs",
-    "licenses": "node scripts/collect-licenses.cjs"
+    "licenses": "node scripts/collect-licenses.cjs",
+    "test:chats": "node electron/chat-store.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

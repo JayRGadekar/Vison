@@ -262,6 +262,40 @@ Until both are set, push and PR builds still run. They use
 A **published release** missing either value fails instead, which is the one
 case where the unusable build would actually reach users.
 
+## Chat history
+
+Conversations live in SQLite at `<userData>/chats.db`, via
+`app/electron/chat-store.ts`. On Windows that is
+`%APPDATA%/Vison/chats.db`.
+
+This replaced one JSON file per conversation under `<userData>/chats/`, which
+had two failure modes that got worse with use: a save was a whole-file rewrite
+with no atomicity, so a crash partway through left an unparseable file and the
+conversation was simply gone; and listing the sidebar meant reading and parsing
+every conversation on disk to keep three fields from each.
+
+The first launch after upgrading imports the old JSON files automatically. It
+**never deletes them** — the directory is renamed to `chats.imported-<epoch>`
+and left in place, because being wrong about an import is recoverable only if
+the originals still exist. A file that cannot be parsed is skipped and counted,
+not fatal. The import is recorded in a `meta` row so it runs once.
+
+`node:sqlite` is used rather than `better-sqlite3`: Electron 41 ships Node 24,
+where it is available unflagged, so there is no dependency, no native module to
+rebuild against Electron's ABI, and nothing added to the installer. It is still
+marked experimental, so it prints a warning on first use and its API may change.
+The surface used is small enough that swapping in `better-sqlite3` would be a
+change to `chat-store.ts` alone.
+
+```
+cd app && npm run test:chats
+```
+
+15 assertions covering the round trip, message ordering, replace-not-append on
+re-save, cascade delete, id validation, and every branch of the JSON import.
+Node 24 imports the TypeScript directly, so there is no build step and no test
+framework to install.
+
 ## Environment variables the backend reads
 
 | Variable | Effect |
