@@ -14,7 +14,9 @@
     "package": "npm run build",
     "check:ffmpeg": "node scripts/check-ffmpeg-license.cjs",
     "licenses": "node scripts/collect-licenses.cjs",
-    "test:chats": "node electron/chat-store.test.mjs"
+    "test:chats": "node electron/chat-store.test.mjs",
+    "test:titles": "node src/conversation-title.test.mjs",
+    "test": "npm run test:chats && npm run test:titles"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

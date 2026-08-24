@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import visonLogo from './assets/icon.png';
+import { conversationTitle } from './conversation-title';
 import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History } from 'lucide-react';
 
 interface AuthUser {
@@ -195,6 +196,21 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
 
+  // Opening a conversation must not rewrite it.
+  //
+  // Loading sets `messages`, which is what the save effect below watches, so
+  // without this every load stamped the conversation with the current time.
+  // The sidebar shows that timestamp and sorts by it, so merely browsing your
+  // history reordered it and destroyed the record of when anything actually
+  // happened. Set just before the state updates a load causes; the effect
+  // consumes it.
+  const skipSaveRef = useRef(false);
+
+  // The id has to be readable synchronously. Read from state, two message
+  // updates that land in the same render batch both see null, mint two
+  // different ids, and one conversation becomes two.
+  const conversationIdRef = useRef<string | null>(null);
+
   // Attachments
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -388,6 +404,11 @@ function App() {
               if (res.chats.length > 0 && !currentConversationId) {
                  chatApi.load(res.chats[0].id).then(r => {
                     if (r.success && r.chat) {
+                       // Resuming the last conversation at launch is a load, not
+                       // a change. Without the guard, starting the app was
+                       // enough to restamp it.
+                       skipSaveRef.current = true;
+                       conversationIdRef.current = r.chat.id;
                        setCurrentConversationId(r.chat.id);
                        setMessages(r.chat.messages || []);
                     }
@@ -399,18 +420,26 @@ function App() {
     }, []);
 
     useEffect(() => {
+      // A load already wrote these messages to state; they are on disk exactly
+      // as they are here, so saving would only move the clock forward.
+      if (skipSaveRef.current) {
+        skipSaveRef.current = false;
+        return;
+      }
+
       if (messages.length > 0 && window.vison?.chat && !isGenerating) {
-        let id = currentConversationId;
+        let id = conversationIdRef.current;
         if (!id) {
           id = `chat_${Date.now()}`;
+          conversationIdRef.current = id;
           setCurrentConversationId(id);
         }
-        const title = messages.find(m => m.role === 'user')?.content?.substring(0, 30) || "New Conversation";
+        const title = conversationTitle(messages);
         const timestamp = Date.now();
         window.vison.chat.save({ id, title, timestamp, messages });
         setConversations(prev => {
           const filtered = prev.filter(c => c.id !== id);
-          return [{ id, title, timestamp }, ...filtered].sort((a, b) => b.timestamp - a.timestamp);
+          return [{ id: id!, title, timestamp }, ...filtered].sort((a, b) => b.timestamp - a.timestamp);
         });
       }
     }, [messages, isGenerating, currentConversationId]);
@@ -419,6 +448,8 @@ function App() {
       if (window.vison?.chat) {
         const res = await window.vison.chat.load(id);
         if (res.success && res.chat) {
+          skipSaveRef.current = true;
+          conversationIdRef.current = id;
           setCurrentConversationId(id);
           setMessages(res.chat.messages || []);
           setCurrentView('chat');
@@ -439,6 +470,12 @@ function App() {
     };
 
     const createNewChat = () => {
+      // Clearing to an empty conversation is also not a change worth saving -
+      // and the save effect ignores an empty message list anyway. Resetting the
+      // ref is what makes the next message mint a fresh id rather than
+      // overwriting the conversation just left.
+      skipSaveRef.current = true;
+      conversationIdRef.current = null;
       setCurrentConversationId(null);
       setMessages([]);
       setCurrentView('chat');
