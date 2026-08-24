@@ -13,34 +13,42 @@ The installer picks up exactly those (`app/package.json` → `build.extraResourc
 
 ```
 cd app
-VISON_GOOGLE_CLIENT_ID="<your-id>.apps.googleusercontent.com" npx vite build
+VISON_GOOGLE_CLIENT_ID="<your-id>.apps.googleusercontent.com" \
+VISON_GOOGLE_CLIENT_SECRET="GOCSPX-<...>" \
+npx vite build
 npx electron-builder --win
 ```
 
 Output: `app/release/Vison Setup 0.1.0.exe`.
 
-### The client ID must be set at build time
+### Both OAuth values must be set at build time
 
-`auth.ts` prefers `process.env.VISON_GOOGLE_CLIENT_ID` at runtime and falls back
-to a value baked in by `vite.config.ts`. Runtime env works for development, but
-nobody sets a system environment variable to launch a desktop app — so a build
-intended for distribution **must** have `VISON_GOOGLE_CLIENT_ID` set when
-`vite build` runs, or every user gets the "Sign-in is not configured" screen and
-the app is unusable.
+`auth.ts` prefers `process.env.VISON_GOOGLE_CLIENT_ID` and
+`VISON_GOOGLE_CLIENT_SECRET` at runtime and falls back to values baked in by
+`vite.config.ts`. Runtime env works for development, but nobody sets a system
+environment variable to launch a desktop app — so a build intended for
+distribution **must** have both set when `vite build` runs, or every user gets
+the "Sign-in is not configured" screen and the app is unusable.
 
-Step-by-step setup is in [OAUTH-SETUP.md](OAUTH-SETUP.md). In short: create
-the ID in Google Cloud Console → Credentials → OAuth client ID →
-**Desktop app**. It is a public identifier; a desktop OAuth client has no secret,
-which is why this uses PKCE.
+Step-by-step setup is in [OAUTH-SETUP.md](OAUTH-SETUP.md). In short: create the
+client in Google Cloud Console → Credentials → OAuth client ID →
+**Desktop app**, and copy both the ID and the secret.
 
-Verify a build carries it:
+Google requires a `client_secret` at the token endpoint even for Desktop app
+clients — a departure from RFC 8252 — so it ships inside the installer and is
+readable by anyone who unpacks one. Do not treat it as a protected credential.
+PKCE is what actually secures the flow: the verifier never leaves the app
+process, so an intercepted authorization code is useless without it.
+
+Verify a build carries both:
 
 ```
 grep -c "apps.googleusercontent.com" app/dist-electron/main.js
+grep -c "GOCSPX-" app/dist-electron/main.js
 ```
 
 Packaging enforces this. `scripts/check-auth-configured.cjs` runs in
-`beforePack` and fails the build if no client ID is present in the shipped
+`beforePack` and fails the build if either value is missing from the shipped
 main-process bundle. It inspects the bundle rather than the environment on
 purpose: `vite-plugin-electron` runs a separate build for the main process, so
 a `define` can reach the renderer and miss `main.js` — which is how this shipped
@@ -233,19 +241,26 @@ It also smoke-tests the backend: start `vison_server.exe`, wait for
 `/api/system`, stop it. That is aimed at the failure mode with no error message
 at all — a DLL that cannot be resolved and a process that simply vanishes.
 
-### CI needs the client ID too
+### CI needs both OAuth values too
 
-Set **`VISON_GOOGLE_CLIENT_ID`** as a repository *variable* (Settings → Secrets
-and variables → Actions → Variables). It is a public identifier — a desktop
-OAuth client has no secret — so a variable is the honest home for it; a secret
-of the same name is read as a fallback.
+Under Settings → Secrets and variables → Actions:
 
-Until it is set, push and PR builds still run. They use
+| Where | Name |
+|---|---|
+| Variables | `VISON_GOOGLE_CLIENT_ID` |
+| Secrets | `VISON_GOOGLE_CLIENT_SECRET` |
+
+Neither is genuinely confidential — both ship inside every installer. The split
+is about where people expect to find them: masking the ID would only make a
+failed build log harder to read, while leaving the secret unmasked invites a
+confusing conversation the first time someone spots it. The workflow accepts
+either source for either value.
+
+Until both are set, push and PR builds still run. They use
 `VISON_ALLOW_UNCONFIGURED_AUTH=1`, and the artifact is named
-`Vison-Setup-windows-UNCONFIGURED` because that installer shows "Sign-in is not
-configured" and can do nothing else. A **published release** with no client ID
-fails instead, which is the one case where the unusable build would actually
-reach users.
+`Vison-Setup-windows-UNCONFIGURED` because that installer cannot sign anyone in.
+A **published release** missing either value fails instead, which is the one
+case where the unusable build would actually reach users.
 
 ## Environment variables the backend reads
 
@@ -256,6 +271,7 @@ reach users.
 | `VISON_FFMPEG` | Explicit path to the muxer. |
 | `VISON_BACKEND_SPEC`, `VISON_MAX_VRAM`, `VISON_VRAM_PROFILE` | Override the automatic backend plan. |
 | `VISON_GOOGLE_CLIENT_ID` | OAuth client ID; overrides the baked-in value. |
+| `VISON_GOOGLE_CLIENT_SECRET` | OAuth client secret; overrides the baked-in value. Google requires one even for Desktop app clients — see `docs/OAUTH-SETUP.md`. |
 | `VISON_SIMULATE_DEVICE_LOSS=N`, `VISON_SIMULATE_OOM=N` | Testing only. Fail every generation whose `vram_backoff` is below `N`, as though the GPU had been reset or run out of memory. `N=1` fails the first attempt and lets the retry succeed; a large `N` exercises the give-up path. See below. |
 
 ### Exercising the GPU-failure recovery

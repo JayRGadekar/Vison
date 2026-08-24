@@ -42,6 +42,7 @@ let cached: StoredTokens | null = null;
 // Baked in at build time by vite.config.ts. Declared, not imported, because it
 // is a compile-time substitution rather than a real module.
 declare const __VISON_GOOGLE_CLIENT_ID__: string;
+declare const __VISON_GOOGLE_CLIENT_SECRET__: string;
 
 // The client ID is deployment configuration, not a secret, but it is also not
 // something that should be invented here - an app with the wrong one fails at
@@ -54,6 +55,31 @@ export function getClientId(): string | null {
   if (fromEnv) return fromEnv;
   const baked = typeof __VISON_GOOGLE_CLIENT_ID__ === 'string'
     ? __VISON_GOOGLE_CLIENT_ID__.trim() : '';
+  return baked || null;
+}
+
+// Google requires a client_secret at the token endpoint even for "Desktop app"
+// clients, which is a departure from RFC 8252 and from every other provider's
+// native-app flow. Without it the browser half of sign-in completes normally
+// and the exchange then fails with:
+//
+//   400 {"error":"invalid_request","error_description":"client_secret is missing."}
+//
+// So this is deployment configuration exactly like the client ID, and it gets
+// the same treatment.
+//
+// It is NOT a secret in any meaningful sense, whatever Google calls it. It is
+// shipped inside the installer and can be read out of the asar by anyone who
+// cares to look; Google's own guidance for installed apps acknowledges this.
+// PKCE is what actually protects the flow - the code_verifier never leaves this
+// process, so an intercepted authorization code is useless without it. Do not
+// let the name mislead you into thinking a leaked value here is a breach; do
+// not reuse this value anywhere that a real secret is expected either.
+export function getClientSecret(): string | null {
+  const fromEnv = process.env.VISON_GOOGLE_CLIENT_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  const baked = typeof __VISON_GOOGLE_CLIENT_SECRET__ === 'string'
+    ? __VISON_GOOGLE_CLIENT_SECRET__.trim() : '';
   return baked || null;
 }
 
@@ -190,6 +216,17 @@ export async function signIn(): Promise<AuthUser> {
       '"Desktop app" client ID from Google Cloud Console.');
   }
 
+  // Checked before the browser opens, not after. Google rejects the exchange at
+  // the very end of the flow, so without this the user picks an account, grants
+  // consent, and only then sees a failure they can do nothing about.
+  const clientSecret = getClientSecret();
+  if (!clientSecret) {
+    throw new Error(
+      'No Google client secret configured. Set VISON_GOOGLE_CLIENT_SECRET to ' +
+      'the secret shown beside the client ID in Google Cloud Console. Google ' +
+      'requires it even for "Desktop app" clients.');
+  }
+
   const verifier = base64url(crypto.randomBytes(32));
   const challenge = base64url(crypto.createHash('sha256').update(verifier).digest());
   const state = base64url(crypto.randomBytes(16));
@@ -219,6 +256,7 @@ export async function signIn(): Promise<AuthUser> {
 
   const tokens = await postForm(GOOGLE_TOKEN_URL, {
     client_id: clientId,
+    client_secret: clientSecret,
     code,
     code_verifier: verifier,
     grant_type: 'authorization_code',
@@ -260,9 +298,17 @@ export async function currentUser(): Promise<AuthUser | null> {
   const clientId = getClientId();
   if (!clientId) return null;
 
+  // The refresh grant is authenticated the same way the code exchange is, so a
+  // build with the ID but no secret would sign in once and then fail to resume
+  // the session an hour later - a much more confusing failure than not signing
+  // in at all.
+  const clientSecret = getClientSecret();
+  if (!clientSecret) return null;
+
   try {
     const refreshed = await postForm(GOOGLE_TOKEN_URL, {
       client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: tokens.refresh_token,
       grant_type: 'refresh_token',
     });

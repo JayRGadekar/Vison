@@ -1,8 +1,15 @@
 # Setting up Google sign-in
 
-One-time setup. Produces the client ID that `npm run build` bakes into the
-installer. Free, and there is no client secret to look after — desktop OAuth
-clients do not have one, which is why `app/electron/auth.ts` uses PKCE.
+One-time setup. Produces the client ID **and client secret** that `npm run
+build` bakes into the installer. Free.
+
+A note on that secret, because Google's naming is misleading: Google requires a
+`client_secret` at the token endpoint even for "Desktop app" clients, which is a
+departure from RFC 8252 and from most other providers. It therefore has to ship
+inside the installer, where anyone can read it out of the asar. It is not a
+credential you can protect and should not be treated as one. PKCE is what
+actually secures this flow — the verifier never leaves the app process, so an
+intercepted authorization code is useless without it.
 
 Everything below happens at <https://console.cloud.google.com>.
 
@@ -58,25 +65,26 @@ nothing to submit and no review.
   its redirect URI from whatever port the OS handed out
   (`http://127.0.0.1:<port>`, `auth.ts:201`). Desktop clients accept any
   loopback port without registering it — that is RFC 8252 behaviour, and it is
-  why there is no redirect URI to fill in here. A **Web application** client
-  demands an exact registered URI, which a random port can never match, and
-  every sign-in fails with `redirect_uri_mismatch`.
+  why there is no redirect URI to fill in here.
 - **Name:** anything; it is only a label in the console.
 
-Copy the client ID. It looks like:
+Copy **both** values from the dialog:
 
 ```
-123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com
+Client ID:     123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com
+Client secret: GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-If the dialog also shows a client secret, ignore it. Vison does not use one and
-must not ship one.
+You need the secret too. Skipping it is the single most likely way to get a
+build that looks configured, opens the browser, collects consent, and then fails
+on the last step — see the failure table below.
 
 ## 6. Build with it
 
 ```powershell
 cd D:\Project\Vllama\app
-$env:VISON_GOOGLE_CLIENT_ID = "<paste the client ID>"
+$env:VISON_GOOGLE_CLIENT_ID     = "<paste the client ID>"
+$env:VISON_GOOGLE_CLIENT_SECRET = "<paste the client secret>"
 npm run build
 ```
 
@@ -84,11 +92,24 @@ Watch for this line early in the output:
 
 ```
 [auth] client ID baked in: 123456789012-....apps.googleusercontent.com
+[auth] client secret baked in: GOCSPX-xxxxx...
 ```
 
+To avoid setting both every time, persist them for your user account:
+
+```powershell
+[Environment]::SetEnvironmentVariable('VISON_GOOGLE_CLIENT_ID','<id>','User')
+[Environment]::SetEnvironmentVariable('VISON_GOOGLE_CLIENT_SECRET','<secret>','User')
+```
+
+New terminals pick those up; existing ones do not. `auth.ts` prefers the runtime
+value over the baked one, so this also fixes `npm run dev`, which rebuilds
+`main.js` on every launch and would otherwise wipe a baked-in value.
+
 If instead the build stops with *"Refusing to package: no Google OAuth client
-ID is baked into main.js"*, the environment variable was not set in the shell
-that ran the build. `$env:` assignments only last for that terminal session.
+ID and client secret baked into main.js"*, the environment variables were not
+set in the shell that ran the build. `$env:` assignments only last for that
+terminal session.
 
 ## 7. Verify the round trip
 
@@ -106,24 +127,30 @@ skipped.
 
 | What you see | Cause |
 |---|---|
-| `client_secret is missing` (400 from `/token`, after the browser flow succeeds) | Client type is **Web application**, not Desktop app (step 5). A Web client is confidential, so Google demands a secret at the token exchange — and a desktop app must never ship one. This is the usual symptom of the wrong type, not `redirect_uri_mismatch`: Google ignores the port when matching loopback redirect URIs, so the browser half of the flow completes and only the token exchange fails. Create a new client; the type cannot be changed. |
-| `redirect_uri_mismatch` | Also a wrong client type, when the loopback URI is not registered at all. Same fix. |
+| `client_secret is missing` (400 from `/token`, after the browser flow succeeds) | No client secret in the build. Google requires one even for Desktop app clients, so this is **not** a sign that the client type is wrong — set `VISON_GOOGLE_CLIENT_SECRET` and rebuild (step 6). |
+| `redirect_uri_mismatch` | Client type is **Web application**, not Desktop app (step 5). Create a new client; the type cannot be changed. |
+| `invalid_client` / `Unauthorized` | The ID and the secret are from different clients. They are issued as a pair; copy both from the same one. |
 | `access_blocked` / "app has not completed verification" | Consent screen is incomplete, or a sensitive scope crept in (step 3). |
 | Signed out again after a week | App left in Testing mode (step 4). |
-| "Sign-in is not configured" | No client ID in the build — this build predates the packaging gate, or `VISON_ALLOW_UNCONFIGURED_AUTH=1` was set. |
+| "Sign-in is not configured" | No client ID **or no client secret** in the build — this build predates the packaging gate, or `VISON_ALLOW_UNCONFIGURED_AUTH=1` was set. |
 
-## 8. Give CI the same client ID
+## 8. Give CI the same credentials
 
 The workflow in `.github/workflows/build.yml` builds installers too, and it
-cannot read your shell. Set the ID once in the repository:
+cannot read your shell. Set both values once in the repository, under
+**Settings → Secrets and variables → Actions**:
 
-**Settings → Secrets and variables → Actions → Variables → New repository
-variable**, named `VISON_GOOGLE_CLIENT_ID`, with the same value.
+| Where | Name | Value |
+|---|---|---|
+| Variables | `VISON_GOOGLE_CLIENT_ID` | the client ID |
+| Secrets | `VISON_GOOGLE_CLIENT_SECRET` | the client secret |
 
-A *variable*, not a secret. A client ID is a public identifier — it ships inside
-every installer and is readable by anyone who unpacks one — and masking it in
-the logs only makes a failed build harder to read. The workflow does check
-`secrets.VISON_GOOGLE_CLIENT_ID` as a fallback if you prefer it there anyway.
+Neither is genuinely confidential — both ship inside every installer and can be
+read out of the asar by anyone who unpacks one. The split above is about where
+people expect to find them, not about protection: masking the ID would only make
+a failed build log harder to read, and leaving the secret unmasked invites a
+confusing conversation the first time someone spots it in a log. The workflow
+accepts either source for either value.
 
 Until it is set, CI still builds on every push, but the installer is named
 `Vison-Setup-windows-UNCONFIGURED` and shows "Sign-in is not configured" —
@@ -133,7 +160,7 @@ would reach people who trust it.
 
 ## Making it your own later
 
-To rotate the ID, create a new client and rebuild — nothing in the app is
+To rotate the credentials, create a new client and rebuild with both values — nothing in the app is
 pinned to a particular one. To develop without rebuilding, set
 `VISON_GOOGLE_CLIENT_ID` in your shell before launching; the runtime value wins
 over the baked one (`getClientId()`, `auth.ts:52`).

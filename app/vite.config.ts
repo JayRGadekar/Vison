@@ -4,16 +4,23 @@ import electron from 'vite-plugin-electron/simple'
 
 // https://vite.dev/config/
 export default defineConfig({
-  // Bake the OAuth client ID into the build.
+  // Bake the OAuth client ID and secret into the build.
   //
   // auth.ts reads process.env at runtime, which is fine in development but
   // useless once the app is installed - nobody sets a system environment
-  // variable to launch a desktop app. Set VISON_GOOGLE_CLIENT_ID when running
-  // the build and it travels with the bundle; a runtime env var still wins, so
-  // development keeps working without rebuilding. It is a public identifier,
-  // not a secret - a desktop OAuth client has no secret to leak.
+  // variable to launch a desktop app. Set VISON_GOOGLE_CLIENT_ID and
+  // VISON_GOOGLE_CLIENT_SECRET when running the build and they travel with the
+  // bundle; runtime env vars still win, so development keeps working without
+  // rebuilding.
+  //
+  // Both are public identifiers despite the name on the second one. Google
+  // requires a client_secret at the token endpoint even for "Desktop app"
+  // clients, so it has to ship inside the installer, where anyone can read it
+  // out of the asar. PKCE is what actually secures this flow. See
+  // getClientSecret() in electron/auth.ts.
   define: {
     __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_ID || ''),
+    __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_SECRET || ''),
   },
   plugins: [
     react(),
@@ -25,6 +32,7 @@ export default defineConfig({
         vite: {
           define: {
             __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_ID || ''),
+            __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_SECRET || ''),
           },
         },
       },

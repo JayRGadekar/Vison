@@ -6,7 +6,7 @@ import os from 'os';
 import http from 'http';
 import fs from 'fs/promises';
 import crypto from 'crypto';
-import { signIn, signOut, currentUser, getClientId } from './auth';
+import { signIn, signOut, currentUser, getClientId, getClientSecret } from './auth';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -179,7 +179,7 @@ ipcMain.handle('auth:signOut', async () => {
 
 ipcMain.handle('auth:status', async () => {
   const user = await currentUser();
-  return { signedIn: !!user, user, configured: !!getClientId() };
+  return { signedIn: !!user, user, configured: !!getClientId() && !!getClientSecret() };
 });
 
 ipcMain.handle('backend:request', async (_event, req: { path: string; init?: { method?: string; headers?: Record<string, string>; body?: string } }) => {

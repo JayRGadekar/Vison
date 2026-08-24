@@ -1070,8 +1070,9 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                style={{ WebkitAppRegion: 'no-drag' } as any}>
             <p className="text-sm font-medium text-amber-400">Sign-in is not configured</p>
             <p className="mt-1 text-xs text-gray-400">
-              Set <code className="text-gray-300">VISON_GOOGLE_CLIENT_ID</code> to an OAuth
-              “Desktop app” client ID from Google Cloud Console, then restart Vison.
+              Set <code className="text-gray-300">VISON_GOOGLE_CLIENT_ID</code> and{' '}
+              <code className="text-gray-300">VISON_GOOGLE_CLIENT_SECRET</code> to an OAuth
+              “Desktop app” client from Google Cloud Console, then restart Vison.
             </p>
           </div>
         ) : (

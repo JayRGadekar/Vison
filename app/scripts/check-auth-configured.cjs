@@ -25,6 +25,14 @@ const BUNDLE = path.resolve(__dirname, '..', 'dist-electron', 'main.js');
 // Google desktop OAuth client IDs are always <digits>-<token>.apps.googleusercontent.com.
 const CLIENT_ID = /[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com/;
 
+// ...and current client secrets are GOCSPX-<token>. Google requires one at the
+// token endpoint even for "Desktop app" clients, so a build with the ID alone
+// gets all the way through the browser flow and then dies on the exchange with
+// "client_secret is missing" - after the user has already picked an account and
+// granted consent. That is a worse first impression than not shipping at all,
+// which is why it is checked here rather than left to fail at runtime.
+const CLIENT_SECRET = /GOCSPX-[A-Za-z0-9_-]{10,}/;
+
 const OVERRIDE = 'VISON_ALLOW_UNCONFIGURED_AUTH';
 
 function checkAuthConfigured({ quiet = false } = {}) {
@@ -42,24 +50,38 @@ function checkAuthConfigured({ quiet = false } = {}) {
   }
 
   const bundle = fs.readFileSync(BUNDLE, 'utf8');
-  const found = bundle.match(CLIENT_ID);
-  if (found) {
-    if (!quiet) console.log(`[auth] client ID baked in: ${found[0]}`);
+  const id = bundle.match(CLIENT_ID);
+  const secret = bundle.match(CLIENT_SECRET);
+
+  if (id && secret) {
+    if (!quiet) {
+      console.log(`[auth] client ID baked in: ${id[0]}`);
+      // Deliberately not printed in full. It is not a real secret - it ships in
+      // the installer - but echoing it into build logs that get pasted around
+      // invites a confusing conversation about whether it leaked.
+      console.log(`[auth] client secret baked in: ${secret[0].slice(0, 12)}...`);
+    }
     return;
   }
 
+  const missing = [!id && 'client ID', !secret && 'client secret'].filter(Boolean).join(' and ');
+
   throw new Error(
-    `Refusing to package: no Google OAuth client ID is baked into ${path.basename(BUNDLE)}.\n\n` +
-    `Every screen in Vison is behind sign-in, so this installer would show\n` +
-    `"Sign-in is not configured" and stop there for every user who installs it.\n\n` +
+    `Refusing to package: no Google OAuth ${missing} baked into ${path.basename(BUNDLE)}.\n\n` +
+    `Every screen in Vison is behind sign-in, so this installer would fail for\n` +
+    `every user who installs it - with no client ID it shows "Sign-in is not\n` +
+    `configured", and with no client secret it dies on the token exchange after\n` +
+    `the user has already granted consent.\n\n` +
     `Create an OAuth 2.0 Client ID of type "Desktop app" in Google Cloud Console\n` +
-    `(APIs & Services -> Credentials), then build with it set:\n\n` +
+    `(APIs & Services -> Credentials), then build with both values set:\n\n` +
     `  $env:VISON_GOOGLE_CLIENT_ID = "<id>.apps.googleusercontent.com"\n` +
+    `  $env:VISON_GOOGLE_CLIENT_SECRET = "GOCSPX-<...>"\n` +
     `  npm run build\n\n` +
-    `It is a public identifier, not a secret - desktop OAuth clients have no\n` +
-    `client secret. To build a deliberately unusable installer for local\n` +
-    `testing, set ${OVERRIDE}=1.\n` +
-    `See docs/BUILD.md.`);
+    `Both are public identifiers despite the name on the second: Google requires\n` +
+    `a client_secret even for desktop clients, so it ships inside the installer\n` +
+    `where anyone can read it. PKCE is what secures the flow. To build a\n` +
+    `deliberately unusable installer for local testing, set ${OVERRIDE}=1.\n` +
+    `See docs/OAUTH-SETUP.md.`);
 }
 
 module.exports = checkAuthConfigured;

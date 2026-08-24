@@ -51,33 +51,47 @@ jobs:
       # named so nobody mistakes it for something shippable. A published
       # release is not let through.
       #
-      # The ID is a public identifier - a desktop OAuth client has no secret -
-      # so a repository variable is the right home for it. A secret is accepted
-      # too, for anyone who set it up that way.
+      # Both halves are needed. Google requires a client_secret at the token
+      # endpoint even for "Desktop app" clients, so an installer built with the
+      # ID alone takes the user all the way through the browser consent screen
+      # and then fails the exchange with "client_secret is missing" - a worse
+      # outcome than refusing to build.
+      #
+      # Neither value is confidential in practice: both ship inside the
+      # installer and can be read out of the asar, which is why PKCE rather
+      # than the secret is what actually protects the flow. The ID reads best
+      # from a repository variable and the secret from a repository secret,
+      # purely because that is where people look for them; either source is
+      # accepted for either value.
       # ------------------------------------------------------------------
-      - name: Resolve OAuth client ID
+      - name: Resolve OAuth client credentials
         id: auth
         shell: bash
         env:
-          FROM_VAR: ${{ vars.VISON_GOOGLE_CLIENT_ID }}
-          FROM_SECRET: ${{ secrets.VISON_GOOGLE_CLIENT_ID }}
+          ID_FROM_VAR: ${{ vars.VISON_GOOGLE_CLIENT_ID }}
+          ID_FROM_SECRET: ${{ secrets.VISON_GOOGLE_CLIENT_ID }}
+          SECRET_FROM_SECRET: ${{ secrets.VISON_GOOGLE_CLIENT_SECRET }}
+          SECRET_FROM_VAR: ${{ vars.VISON_GOOGLE_CLIENT_SECRET }}
         run: |
-          CLIENT_ID="${FROM_VAR:-$FROM_SECRET}"
-          if [ -n "$CLIENT_ID" ]; then
-            echo "configured=true"      >> "$GITHUB_OUTPUT"
-            echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
-            echo "allow_unconfigured="  >> "$GITHUB_OUTPUT"
-            echo "suffix="              >> "$GITHUB_OUTPUT"
-            echo "Client ID present; building a usable installer."
+          CLIENT_ID="${ID_FROM_VAR:-$ID_FROM_SECRET}"
+          CLIENT_SECRET="${SECRET_FROM_SECRET:-$SECRET_FROM_VAR}"
+          if [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ]; then
+            echo "configured=true"              >> "$GITHUB_OUTPUT"
+            echo "client_id=$CLIENT_ID"         >> "$GITHUB_OUTPUT"
+            echo "client_secret=$CLIENT_SECRET" >> "$GITHUB_OUTPUT"
+            echo "allow_unconfigured="          >> "$GITHUB_OUTPUT"
+            echo "suffix="                      >> "$GITHUB_OUTPUT"
+            echo "Client ID and secret present; building a usable installer."
           elif [ "$GITHUB_EVENT_NAME" = "release" ]; then
-            echo "::error title=No OAuth client ID::Refusing to build a release installer with no Google OAuth client ID. Every screen is behind sign-in, so this build would be unusable for everyone who installed it. Set the repository variable VISON_GOOGLE_CLIENT_ID under Settings -> Secrets and variables -> Actions -> Variables. See docs/OAUTH-SETUP.md."
+            echo "::error title=Incomplete OAuth configuration::Refusing to build a release installer without BOTH a Google OAuth client ID and client secret. Every screen is behind sign-in, so this build would be unusable for everyone who installed it. Set the repository variable VISON_GOOGLE_CLIENT_ID and the repository secret VISON_GOOGLE_CLIENT_SECRET under Settings -> Secrets and variables -> Actions. See docs/OAUTH-SETUP.md."
             exit 1
           else
             echo "configured=false"     >> "$GITHUB_OUTPUT"
             echo "client_id="           >> "$GITHUB_OUTPUT"
+            echo "client_secret="       >> "$GITHUB_OUTPUT"
             echo "allow_unconfigured=1" >> "$GITHUB_OUTPUT"
             echo "suffix=-UNCONFIGURED" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Unconfigured build::No VISON_GOOGLE_CLIENT_ID is set, so this installer shows 'Sign-in is not configured' and cannot be used. It is a compile check only. See docs/OAUTH-SETUP.md."
+            echo "::warning title=Unconfigured build::VISON_GOOGLE_CLIENT_ID and/or VISON_GOOGLE_CLIENT_SECRET are not set, so this installer cannot sign anyone in. It is a compile check only. See docs/OAUTH-SETUP.md."
           fi
 
       # ------------------------------------------------------------------
@@ -225,19 +239,23 @@ jobs:
         working-directory: app
         env:
           VISON_GOOGLE_CLIENT_ID: ${{ steps.auth.outputs.client_id }}
+          VISON_GOOGLE_CLIENT_SECRET: ${{ steps.auth.outputs.client_secret }}
         run: npx vite build
 
       # vite-plugin-electron runs a separate build for the main process, so a
       # define can reach the renderer and miss main.js. That shipped once.
       # Check the artifact that actually carries the value.
-      - name: Verify the client ID reached the main-process bundle
+      - name: Verify both credentials reached the main-process bundle
         if: steps.auth.outputs.configured == 'true'
         shell: pwsh
         run: |
           if (-not (Select-String -Path 'app/dist-electron/main.js' -Pattern 'apps\.googleusercontent\.com' -Quiet)) {
             throw "VISON_GOOGLE_CLIENT_ID did not reach app/dist-electron/main.js."
           }
-          Write-Host 'Client ID is present in the main-process bundle.'
+          if (-not (Select-String -Path 'app/dist-electron/main.js' -Pattern 'GOCSPX-' -Quiet)) {
+            throw "VISON_GOOGLE_CLIENT_SECRET did not reach app/dist-electron/main.js."
+          }
+          Write-Host 'Client ID and secret are present in the main-process bundle.'
 
       - name: Package installer
         shell: pwsh
