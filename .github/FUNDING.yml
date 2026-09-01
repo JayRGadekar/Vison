@@ -1,21 +1,24 @@
 # Puts a "Sponsor" button at the top of the repository.
 #
-# Only entries that are actually set up do anything: an unenrolled or wrong
-# handle is ignored by GitHub rather than showing a broken link, so an entry
+# This is the repository-page twin of app/src/support-links.ts. The two are
+# kept in step by hand - GitHub does not read the TypeScript, and the app does
+# not read this. Change one, change the other.
+#
+# Only entries that are actually set up do anything: an unapproved or wrong
+# handle is ignored by GitHub rather than shown as a broken link, so an entry
 # here is not proof the platform is live. Check the button appears after
-# pushing this.
+# pushing, and click it.
 #
-# github: needs enrolment at https://github.com/sponsors - free, no fees taken,
-# but it asks for identity and bank/Stripe details and takes a few days.
-#
-# The others are commented out. Uncomment whichever you set up, with your own
-# handle. ko_fi is the quickest to get running if you want something today.
+# github: needs approval at https://github.com/sponsors - takes no fee, but
+# asks for PAN, bank details and Stripe KYC, and takes a few days.
 
 github: [JayRGadekar]
 
-# ko_fi: your-handle              # https://ko-fi.com
-# buy_me_a_coffee: your-handle    # https://buymeacoffee.com
-# open_collective: your-project   # https://opencollective.com
-# liberapay: your-handle          # https://liberapay.com
-# polar: your-handle              # https://polar.sh
-# custom: ["https://example.com/donate"]
+# Uncomment each once the account exists and the URL loads signed out.
+#
+# polar: your-handle                                  # https://polar.sh
+# custom: ["https://pages.razorpay.com/your-slug"]    # Razorpay Payment Page
+
+# Not usable from India: ko_fi and liberapay both want your own Stripe
+# account, which is invite-only here, and buy_me_a_coffee appears closed to
+# new Indian onboarding. Left out deliberately rather than forgotten.

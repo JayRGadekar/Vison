@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import visonLogo from './assets/icon.png';
 import { conversationTitle } from './conversation-title';
-import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History, LogOut, Search } from 'lucide-react';
+import { FUNDING_LINKS, CONTRIBUTION_LINKS } from './support-links';
+import { Sparkles, Maximize2, Columns, RectangleHorizontal, RectangleVertical, Frame, Wand2, Settings, PenBox, Plus, ChevronDown, X, Library, Image as ImageIcon, Video, Maximize, ArrowUp, Download, Loader2, Trash2, CheckCircle2, Square, RefreshCcw, Wifi, History, LogOut, LogIn, User, Search, Heart, ExternalLink } from 'lucide-react';
 
 interface AuthUser {
   email: string;
@@ -17,6 +18,7 @@ declare global {
         init?: { method?: string; headers?: Record<string, string>; body?: string }
       ) => Promise<{ ok: boolean; status: number; text: string; json: any; error: string | null }>;
       notices?: () => Promise<{ success: boolean; text?: string; error?: string }>;
+      openExternal?: (url: string) => Promise<{ success: boolean; error?: string }>;
       auth?: {
         signIn: () => Promise<{ success: boolean; user?: AuthUser; error?: string }>;
         signOut: () => Promise<{ success: boolean }>;
@@ -232,6 +234,27 @@ function App() {
   // Settings State
   const [showSettings, setShowSettings] = useState(false);
   const [noticesText, setNoticesText] = useState<string | null>(null);
+  const [showSupport, setShowSupport] = useState(false);
+  const [supportError, setSupportError] = useState<string | null>(null);
+
+  // Hand a support link to the main process, which opens it in the real
+  // browser. It refuses anything not in src/support-links.ts, so a failure
+  // here is either a missing bridge or a browser that would not launch -
+  // both worth saying out loud, because the alternative is a button that
+  // looks broken.
+  const openSupportLink = async (url: string) => {
+    setSupportError(null);
+    const open = window.vison?.openExternal;
+    if (!open) {
+      setSupportError(`Could not open your browser. The link is ${url}`);
+      return;
+    }
+    const result = await open(url);
+    if (!result?.success) {
+      setSupportError(`Could not open your browser. The link is ${url}`);
+    }
+  };
+
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [runHistory, setRunHistory] = useState<RunRecord[]>(() => loadRunHistory());
   // Real GPUs reported by the backend. `index` is exactly what gpu_id expects,
@@ -254,10 +277,6 @@ function App() {
   // derivable from `localModels` - a model can be 0% "downloaded" and still
   // have most of its weight present because another model brought it in.
   const [presentBytes, setPresentBytes] = useState<Record<string, number>>({});
-  // Whether sign-in gates the app at all. False only when there is no Electron
-  // auth bridge to sign in through - see the effect below.
-  const [authRequired, setAuthRequired] = useState(true);
-
   // /api/models/local answers two questions at once; keep unpacking it in one
   // place so a caller cannot refresh one half and leave the other stale.
   const applyLocal = (data: any) => {
@@ -269,30 +288,18 @@ function App() {
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<string | null>(null);
 
-    // Resolve the session once at startup. Everything else in the app is gated
-    // on the result, and the IPC bridge refuses backend calls without it too -
-    // so this is the gate, not just a cosmetic screen.
+    // Resolve the stored session once at startup.
+    //
+    // Sign-in is optional, so this only decides what the account menu shows.
+    // It used to decide whether the app rendered at all, which meant anyone
+    // building from source without their own OAuth client got a dead end.
     useEffect(() => {
       const api = window.vison?.auth;
       if (!api) {
-        // Running in a plain browser (vite dev) rather than Electron: there is
-        // no OAuth bridge, so do not lock the developer out of their own app.
-        //
-        // This used to set authUser to null, which is exactly what the gate
-        // below treats as "signed out" - so the comment said one thing and the
-        // code did the other, and `npm run dev` in a browser showed nothing but
-        // the sign-in screen. Clear the requirement instead.
-        //
-        // Only reachable without the preload bridge, which the packaged app
-        // always has; it is not a way around the gate in a shipped build.
-        setAuthRequired(false);
-        // A placeholder identity rather than null, so the signed-in chrome -
-        // the account menu in the header - is actually visible to whoever is
-        // looking at the UI. With null it rendered nothing, which meant the
-        // one tool for inspecting the UI could not show a whole corner of it.
-        // Same reachability as the lines around it: no preload bridge, which a
-        // packaged build always has.
-        setAuthUser({ email: 'dev@localhost', name: 'Dev Preview' });
+        // A plain browser (vite dev) rather than Electron: no OAuth bridge, so
+        // there is nothing to sign in to. The app runs regardless, and the
+        // account menu simply offers no sign-in item.
+        setAuthUser(null);
         setAuthConfigured(false);
         return;
       }
@@ -936,13 +943,19 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
     (m: any) => m.id === selectedModel.id && m.task === selectedModel.task);
   const frameAlignment: number = Number(selectedEntry?.frame_alignment) > 0
     ? Number(selectedEntry.frame_alignment) : 1;
+  // Every model until MiniMax H3 snaps to k*alignment + 1 (Wan's 4n+1). H3's
+  // VAE instead wants 17k+5 (docs/minimax_h3.md in stable-diffusion.cpp) - same
+  // shape, different offset - so the offset is now a registry field rather
+  // than a hardcoded 1.
+  const frameAlignmentOffset: number = Number(selectedEntry?.frame_alignment_offset) > 0
+    ? Number(selectedEntry.frame_alignment_offset) : 1;
 
   const alignFrames = (frames: number) => {
     const n = Math.max(1, Math.round(frames));
     if (frameAlignment <= 1) return n;
-    // Valid counts are k*alignment + 1; pick the nearest, never below 1 frame.
-    const k = Math.max(0, Math.round((n - 1) / frameAlignment));
-    return k * frameAlignment + 1;
+    // Valid counts are k*alignment + offset; pick the nearest, never below the offset itself.
+    const k = Math.max(0, Math.round((n - frameAlignmentOffset) / frameAlignment));
+    return k * frameAlignment + frameAlignmentOffset;
   };
 
   const videoFps = Math.max(1, Number(settings.fps) || 16);
@@ -1155,63 +1168,6 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
     }
   };
 
-  // Still resolving the stored session - show nothing rather than flashing the
-  // sign-in screen at someone who is already signed in.
-  if (authUser === undefined) {
-    return (
-      <div className="flex h-screen items-center justify-center" style={{ backgroundColor: '#181818' }}>
-        <Loader2 className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    );
-  }
-
-  // The gate. Nothing below this renders until there is a session, and the IPC
-  // bridge independently refuses backend calls without one - so this is not a
-  // screen that can be skipped by poking at the renderer.
-  if (authRequired && authUser === null) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center gap-6 px-8 text-center"
-           style={{ backgroundColor: '#181818', WebkitAppRegion: 'drag' } as any}>
-        <div className="flex flex-col items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
-          <img src={visonLogo} alt="" className="w-20 h-20 opacity-90" />
-          <h1 className="text-2xl font-semibold text-white">Vison</h1>
-          <p className="max-w-sm text-sm text-gray-400">
-            Sign in to generate images and video locally on your machine.
-          </p>
-        </div>
-
-        {!authConfigured ? (
-          <div className="max-w-md rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-left"
-               style={{ WebkitAppRegion: 'no-drag' } as any}>
-            <p className="text-sm font-medium text-amber-400">Sign-in is not configured</p>
-            <p className="mt-1 text-xs text-gray-400">
-              Set <code className="text-gray-300">VISON_GOOGLE_CLIENT_ID</code> and{' '}
-              <code className="text-gray-300">VISON_GOOGLE_CLIENT_SECRET</code> to an OAuth
-              “Desktop app” client from Google Cloud Console, then restart Vison.
-            </p>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={handleSignIn}
-            disabled={authBusy}
-            className="flex items-center gap-3 rounded-full bg-white px-6 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-200 disabled:opacity-60"
-            style={{ WebkitAppRegion: 'no-drag' } as any}
-          >
-            {authBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {authBusy ? 'Waiting for your browser…' : 'Continue with Google'}
-          </button>
-        )}
-
-        {authError && (
-          <p className="max-w-md text-xs text-red-400" style={{ WebkitAppRegion: 'no-drag' } as any}>
-            {authError}
-          </p>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-screen text-gray-100 font-sans relative" style={{ backgroundColor: '#181818' }}>
 
@@ -1267,63 +1223,117 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                 <span title="New Chat" className="inline-flex"><PenBox className="w-5 h-5 cursor-pointer hover:text-white transition-colors" onClick={createNewChat} /></span>
             )}
           </div>
-          {/* Signed-in account, with sign-out. Rendered only when there is
-              actually a session: the gate below used to guarantee that, so
-              this block dereferenced authUser unconditionally and crashed the
-              whole app the moment the gate could be skipped. */}
-          {authUser && (
-            <div className="relative" ref={accountMenuRef}
-                 style={{ WebkitAppRegion: 'no-drag' } as any}>
-              <button
-                type="button"
-                onClick={() => setShowAccountMenu(v => !v)}
-                aria-haspopup="menu"
-                aria-expanded={showAccountMenu}
-                title={authUser.email}
-                className={`flex items-center gap-2 rounded-full py-1 pl-1 pr-2 text-xs transition-colors ${
-                  showAccountMenu ? 'bg-[#2c2c2c] text-white' : 'text-gray-400 hover:bg-[#2c2c2c] hover:text-white'}`}
-              >
-                {authUser.picture ? (
-                  <img src={authUser.picture} alt="" className="h-7 w-7 rounded-full object-cover"
-                       onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                ) : (
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#3a3a3a] text-[11px] font-medium text-gray-200">
-                    {(authUser.name || authUser.email || '?').trim().charAt(0).toUpperCase()}
-                  </span>
-                )}
-                <span className="max-w-[14ch] truncate font-medium">{authUser.name || authUser.email}</span>
-                <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
-              </button>
+          {/* Account menu.
+              Always rendered, signed in or not, and always carrying the same
+              three items. It used to appear only with a session, which was fine
+              when a session was mandatory - now that sign-in is optional it
+              would have hidden Settings and Support Vison from most users, since
+              most will never sign in. */}
+          <div className="relative" ref={accountMenuRef}
+               style={{ WebkitAppRegion: 'no-drag' } as any}>
+            <button
+              type="button"
+              onClick={() => setShowAccountMenu(v => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showAccountMenu}
+              title={authUser ? authUser.email : 'Account'}
+              className={`flex items-center gap-2 rounded-full py-1 pl-1 pr-2 text-xs transition-colors ${
+                showAccountMenu ? 'bg-[#2c2c2c] text-white' : 'text-gray-400 hover:bg-[#2c2c2c] hover:text-white'}`}
+            >
+              {authUser?.picture ? (
+                <img src={authUser.picture} alt="" className="h-7 w-7 rounded-full object-cover"
+                     onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              ) : (
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#3a3a3a] text-[11px] font-medium text-gray-200">
+                  {authUser
+                    ? (authUser.name || authUser.email || '?').trim().charAt(0).toUpperCase()
+                    : <User className="h-3.5 w-3.5" />}
+                </span>
+              )}
+              <span className="max-w-[14ch] truncate font-medium">
+                {authUser ? (authUser.name || authUser.email) : 'Account'}
+              </span>
+              <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${showAccountMenu ? 'rotate-180' : ''}`} />
+            </button>
 
-              {showAccountMenu && (
-                <div role="menu"
-                     className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
-                  <div className="border-b border-[#343434] px-3 py-2.5">
-                    <p className="truncate text-sm font-medium text-gray-100">{authUser.name || 'Signed in'}</p>
-                    <p className="truncate text-xs text-gray-500" title={authUser.email}>{authUser.email}</p>
-                  </div>
+            {showAccountMenu && (
+              <div role="menu"
+                   className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
+                <div className="border-b border-[#343434] px-3 py-2.5">
+                  {authUser ? (
+                    <>
+                      <p className="truncate text-sm font-medium text-gray-100">{authUser.name || 'Signed in'}</p>
+                      <p className="truncate text-xs text-gray-500" title={authUser.email}>{authUser.email}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-gray-100">Not signed in</p>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        {authConfigured
+                          ? 'Everything works without it. Signing in is optional.'
+                          : 'This build was made without sign-in configured.'}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Signed out, the first item is the one the header just talked
+                    about, so it leads. Signed in, sign-out is the last thing
+                    you want under the cursor by accident, so it trails. */}
+                {!authUser && (
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={openSettingsFromMenu}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-white"
+                    onClick={handleSignIn}
+                    disabled={authBusy || !authConfigured}
+                    title={authConfigured ? undefined : 'This build has no Google client configured'}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-white disabled:cursor-not-allowed disabled:text-gray-600 disabled:hover:bg-transparent"
                   >
-                    <Settings className="h-4 w-4 shrink-0" />
-                    Settings
+                    {authBusy
+                      ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                      : <LogIn className="h-4 w-4 shrink-0" />}
+                    {authBusy ? 'Waiting for your browser…' : 'Log in'}
                   </button>
+                )}
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={openSettingsFromMenu}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-white"
+                >
+                  <Settings className="h-4 w-4 shrink-0" />
+                  Settings
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowAccountMenu(false); setShowSupport(true); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-white"
+                >
+                  <Heart className="h-4 w-4 shrink-0" />
+                  Support Vison
+                </button>
+
+                {authUser && (
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => { setShowAccountMenu(false); handleSignOut(); }}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-red-400"
+                    className="flex w-full items-center gap-2.5 border-t border-[#343434] px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-[#2c2c2c] hover:text-red-400"
                   >
                     <LogOut className="h-4 w-4 shrink-0" />
                     Sign out
                   </button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+
+                {authError && (
+                  <p className="border-t border-[#343434] px-3 py-2 text-xs text-red-400">{authError}</p>
+                )}
+              </div>
+            )}
+          </div>
       </header>
 
       {/* Sidebar UI */}
@@ -2177,6 +2187,98 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
             <pre className="flex-1 overflow-auto whitespace-pre-wrap break-words px-5 py-4 text-xs leading-relaxed text-gray-400">
               {noticesText}
             </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Support Vison.
+          Deliberately a plain list of links rather than a payment form: taking
+          money inside the app would mean handling card details in an Electron
+          renderer, and every platform below already does that properly. The
+          app's job is to open the browser at the right page. */}
+      {showSupport && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-6"
+          onClick={() => { setShowSupport(false); setSupportError(null); }}
+        >
+          <div
+            className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-[#343434] bg-[#1c1c1c] shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#2c2c2c] px-5 py-4">
+              <h3 className="flex items-center gap-2 text-base font-semibold text-white">
+                <Heart className="h-4 w-4 text-red-400" />
+                Support Vison
+              </h3>
+              <X
+                className="h-4 w-4 cursor-pointer text-gray-400 hover:text-white"
+                onClick={() => { setShowSupport(false); setSupportError(null); }}
+              />
+            </div>
+
+            <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+              <p className="text-sm leading-relaxed text-gray-400">
+                Vison is free and MIT licensed, and it stays that way. There is no paid
+                tier, nothing held back, and no plan to add either. Everything still runs
+                on your own machine — supporting the project does not send anything
+                anywhere.
+              </p>
+
+              {FUNDING_LINKS.filter(link => link.url).length > 0 ? (
+                <div className="space-y-2">
+                  {FUNDING_LINKS.filter(link => link.url).map(link => (
+                    <button
+                      key={link.id}
+                      type="button"
+                      onClick={() => openSupportLink(link.url)}
+                      className="group flex w-full items-center justify-between gap-3 rounded-xl border border-[#343434] bg-[#242424] px-4 py-3 text-left transition-colors hover:border-[#4a4a4a] hover:bg-[#2c2c2c]"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-gray-100">{link.label}</span>
+                        <span className="block text-xs leading-relaxed text-gray-500">{link.detail}</span>
+                      </span>
+                      <ExternalLink className="h-4 w-4 shrink-0 text-gray-500 group-hover:text-gray-300" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-[#343434] bg-[#242424] px-4 py-3 text-xs text-gray-500">
+                  No donation link is set up yet. The ways to help below are worth more
+                  anyway.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Or help without paying anything
+                </p>
+                {CONTRIBUTION_LINKS.filter(link => link.url).map(link => (
+                  <button
+                    key={link.id}
+                    type="button"
+                    onClick={() => openSupportLink(link.url)}
+                    className="group flex w-full items-center justify-between gap-3 rounded-xl border border-transparent px-4 py-2.5 text-left transition-colors hover:border-[#343434] hover:bg-[#242424]"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm text-gray-300">{link.label}</span>
+                      <span className="block text-xs leading-relaxed text-gray-500">{link.detail}</span>
+                    </span>
+                    <ExternalLink className="h-4 w-4 shrink-0 text-gray-600 group-hover:text-gray-400" />
+                  </button>
+                ))}
+              </div>
+
+              <p className="border-t border-[#2c2c2c] pt-4 text-xs leading-relaxed text-gray-500">
+                Vison is one developer on one machine. Money goes to hardware it has
+                never been tested on — three of the registered models do not fit on the
+                6 GB laptop GPU it was built against — and to a code signing
+                certificate, so the installer stops tripping SmartScreen.
+              </p>
+
+              {supportError && (
+                <p className="text-xs text-red-400">{supportError}</p>
+              )}
+            </div>
           </div>
         </div>
       )}

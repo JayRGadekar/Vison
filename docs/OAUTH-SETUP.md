@@ -1,5 +1,10 @@
 # Setting up Google sign-in
 
+**You do not need any of this to build or run Vison.** Sign-in is optional -
+generation, history and everything else work signed out, and a build with no
+OAuth credentials simply has no **Sign in** item in its account menu. Follow
+this only if you want to offer sign-in in a build you distribute.
+
 One-time setup. Produces the client ID **and client secret** that `npm run
 build` bakes into the installer. Free.
 
@@ -82,7 +87,7 @@ on the last step — see the failure table below.
 ## 6. Build with it
 
 ```powershell
-cd D:\Project\Vllama\app
+cd app
 $env:VISON_GOOGLE_CLIENT_ID     = "<paste the client ID>"
 $env:VISON_GOOGLE_CLIENT_SECRET = "<paste the client secret>"
 npm run build
@@ -132,7 +137,7 @@ skipped.
 | `invalid_client` / `Unauthorized` | The ID and the secret are from different clients. They are issued as a pair; copy both from the same one. |
 | `access_blocked` / "app has not completed verification" | Consent screen is incomplete, or a sensitive scope crept in (step 3). |
 | Signed out again after a week | App left in Testing mode (step 4). |
-| "Sign-in is not configured" | No client ID **or no client secret** in the build — this build predates the packaging gate, or `VISON_ALLOW_UNCONFIGURED_AUTH=1` was set. |
+| No **Sign in** item in the account menu | The build carries no OAuth credentials. Expected for a fresh clone; rebuild with both values to offer sign-in. |
 
 ## 8. Give CI the same credentials
 
@@ -152,11 +157,9 @@ a failed build log harder to read, and leaving the secret unmasked invites a
 confusing conversation the first time someone spots it in a log. The workflow
 accepts either source for either value.
 
-Until it is set, CI still builds on every push, but the installer is named
-`Vison-Setup-windows-UNCONFIGURED` and shows "Sign-in is not configured" —
-useful as a compile check, useless to a user. Publishing a **release** without
-it fails the build outright, which is the one case where an unusable installer
-would reach people who trust it.
+Until it is set, CI still builds on every push and the installer is named
+`Vison-Setup-windows-no-signin`. That is a working build, not a broken one -
+it just has no sign-in. Releases are not blocked on these being set.
 
 ## Making it your own later
 

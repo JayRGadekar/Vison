@@ -1,0 +1,65 @@
+name: Hardware report
+description: Tell me how Vison ran on a GPU I do not have
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the single most useful thing you can send. Three registered
+        models — Qwen-Image, Wan 2.2 T2V A14B and HunyuanVideo 1.5 — have
+        never been run at all, because they do not fit on the 6 GB laptop GPU
+        Vison was built against. Working *and* failing are both worth
+        reporting.
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+      placeholder: "NVIDIA RTX 4090, 24 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: "Qwen-Image"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - Worked
+        - Ran but the output was wrong
+        - Ran out of VRAM
+        - Crashed
+        - Would not load at all
+    validations:
+      required: true
+
+  - type: input
+    id: settings
+    attributes:
+      label: Resolution, steps, frames
+      placeholder: "1024x1024, 4 steps"
+    validations:
+      required: false
+
+  - type: input
+    id: time
+    attributes:
+      label: How long it took
+      placeholder: "About 40 seconds"
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Error text, screenshots, or what looked off.
+    validations:
+      required: false

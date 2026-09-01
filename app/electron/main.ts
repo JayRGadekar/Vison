@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, Tray, Menu, nativeImage, ipcMain } from 'electron';
+import { app, BrowserWindow, globalShortcut, Tray, Menu, nativeImage, ipcMain, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, ChildProcess } from 'child_process';
@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import { signIn, signOut, currentUser, getClientId, getClientSecret } from './auth';
 import * as chatStore from './chat-store';
+import { ALLOWED_EXTERNAL_URLS } from '../src/support-links';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,6 +110,33 @@ ipcMain.handle('app:notices', async () => {
   };
 });
 
+// Open one of the support links in the user's real browser.
+//
+// Restricted to an allowlist, and to exact URLs rather than hosts. This is not
+// caution for its own sake: shell.openExternal hands a string to the OS to
+// launch, so an unrestricted version of this handler turns anything that can
+// run in the renderer into a way to start arbitrary programs through
+// protocol handlers. The renderer therefore does not get to choose a URL, only
+// to name one this build already ships.
+//
+// The list comes from src/support-links.ts, the same module the page renders
+// its buttons from, so the allowlist cannot fall behind the UI.
+const SUPPORT_URLS = new Set(ALLOWED_EXTERNAL_URLS);
+
+ipcMain.handle('app:openExternal', async (_event, url: unknown) => {
+  if (typeof url !== 'string' || !SUPPORT_URLS.has(url)) {
+    console.warn('[support] refused to open a URL that is not a support link:', url);
+    return { success: false, error: 'Not an allowed link' };
+  }
+
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message ?? 'Could not open your browser' };
+  }
+});
+
 ipcMain.handle('chat:list', async () => {
   try {
     await ensureChatStore();
@@ -167,13 +195,17 @@ ipcMain.handle('auth:status', async () => {
 });
 
 ipcMain.handle('backend:request', async (_event, req: { path: string; init?: { method?: string; headers?: Record<string, string>; body?: string } }) => {
-  // Everything sits behind sign-in: the bridge refuses to reach the backend at
-  // all without a valid session, so nothing in the renderer can get to
-  // generation without one.
-  const signedInUser = await currentUser();
-  if (!signedInUser) {
-    return { ok: false, status: 401, text: '', json: null, error: 'Not signed in' };
-  }
+  // Sign-in is optional and deliberately not checked here.
+  //
+  // This used to refuse every backend call without a session, which made the
+  // whole app unusable to anyone who had not signed in - including anyone who
+  // built from source without their own OAuth client. Vison generates locally
+  // and stores locally; none of that needs a Google identity.
+  //
+  // What actually protects the backend is API_TOKEN below: it is minted per
+  // launch and handed to the process we spawn, so another local program cannot
+  // drive this instance. The session check never added to that - as auth.ts
+  // says, sign-in buys identity, not enforcement.
 
   return new Promise((resolve) => {
     try {

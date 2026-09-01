@@ -37,25 +37,19 @@ jobs:
       - uses: actions/checkout@v4
 
       # ------------------------------------------------------------------
-      # Is this build going to produce a usable installer?
+      # Will this build be able to offer sign-in?
       #
-      # Every screen in Vison is behind Google sign-in, and the client ID has
-      # to be baked in at build time (see docs/OAUTH-SETUP.md). Without one,
-      # app/scripts/check-auth-configured.cjs refuses to package - correctly,
-      # because the installer would show "Sign-in is not configured" and stop
-      # there for every user who installed it.
+      # Sign-in is optional in Vison, so the answer no longer decides whether
+      # the installer is worth shipping - a build with no OAuth credentials is
+      # a complete, usable app that simply has no account menu entry. Releases
+      # are therefore no longer blocked on these being set.
       #
-      # For ordinary CI that gate is too strict: a build proving the tree still
-      # compiles is worth having before the ID exists. So an unconfigured push
-      # build is let through with the documented override, and its artifact is
-      # named so nobody mistakes it for something shippable. A published
-      # release is not let through.
-      #
-      # Both halves are needed. Google requires a client_secret at the token
-      # endpoint even for "Desktop app" clients, so an installer built with the
-      # ID alone takes the user all the way through the browser consent screen
-      # and then fails the exchange with "client_secret is missing" - a worse
-      # outcome than refusing to build.
+      # What is still refused, by app/scripts/check-auth-configured.cjs, is a
+      # HALF-configured build. Google requires a client_secret at the token
+      # endpoint even for "Desktop app" clients, so an installer carrying the
+      # ID alone takes the user through the consent screen and then fails the
+      # exchange with "client_secret is missing". Failing after consent is
+      # worse than offering no sign-in, so both halves or neither.
       #
       # Neither value is confidential in practice: both ship inside the
       # installer and can be read out of the asar, which is why PKCE rather
@@ -81,17 +75,18 @@ jobs:
             echo "client_secret=$CLIENT_SECRET" >> "$GITHUB_OUTPUT"
             echo "allow_unconfigured="          >> "$GITHUB_OUTPUT"
             echo "suffix="                      >> "$GITHUB_OUTPUT"
-            echo "Client ID and secret present; building a usable installer."
-          elif [ "$GITHUB_EVENT_NAME" = "release" ]; then
-            echo "::error title=Incomplete OAuth configuration::Refusing to build a release installer without BOTH a Google OAuth client ID and client secret. Every screen is behind sign-in, so this build would be unusable for everyone who installed it. Set the repository variable VISON_GOOGLE_CLIENT_ID and the repository secret VISON_GOOGLE_CLIENT_SECRET under Settings -> Secrets and variables -> Actions. See docs/OAUTH-SETUP.md."
-            exit 1
+            echo "Client ID and secret present; this build offers sign-in."
           else
+            # Not an error, and not only a compile check: the installer this
+            # produces is a working copy of Vison without the sign-in item.
+            # Passing neither value through keeps it out of the half-configured
+            # case the packaging step refuses.
             echo "configured=false"     >> "$GITHUB_OUTPUT"
             echo "client_id="           >> "$GITHUB_OUTPUT"
             echo "client_secret="       >> "$GITHUB_OUTPUT"
-            echo "allow_unconfigured=1" >> "$GITHUB_OUTPUT"
-            echo "suffix=-UNCONFIGURED" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Unconfigured build::VISON_GOOGLE_CLIENT_ID and/or VISON_GOOGLE_CLIENT_SECRET are not set, so this installer cannot sign anyone in. It is a compile check only. See docs/OAUTH-SETUP.md."
+            echo "allow_unconfigured="  >> "$GITHUB_OUTPUT"
+            echo "suffix=-no-signin"    >> "$GITHUB_OUTPUT"
+            echo "::notice title=Building without sign-in::VISON_GOOGLE_CLIENT_ID and/or VISON_GOOGLE_CLIENT_SECRET are not both set, so this installer ships without Google sign-in. Everything else works. See docs/OAUTH-SETUP.md."
           fi
 
       # ------------------------------------------------------------------

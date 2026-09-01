@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('vison', {
   request: (path: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) =>
     ipcRenderer.invoke('backend:request', { path, init }),
   notices: () => ipcRenderer.invoke('app:notices'),
+  // Only the support links in src/support-links.ts are accepted; main.ts
+  // refuses anything else rather than handing it to the OS.
+  openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   auth: {
     signIn: () => ipcRenderer.invoke('auth:signIn'),
     signOut: () => ipcRenderer.invoke('auth:signOut'),

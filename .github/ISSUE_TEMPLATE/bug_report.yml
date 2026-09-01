@@ -1,0 +1,73 @@
+name: Bug report
+description: Something does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vison has been developed against exactly one GPU. If you are on
+        anything else, the hardware fields below are the most useful part of
+        this form — they are usually what explains the bug.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+      description: As Vison reports it in Settings, or from your driver panel.
+      placeholder: "NVIDIA RTX 3060 Laptop, 6 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: driver
+    attributes:
+      label: Graphics driver version
+      placeholder: "581.29"
+    validations:
+      required: false
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Which model was selected, if the bug involves generating.
+      placeholder: "FLUX.1 Schnell"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you get Vison?
+      options:
+        - Installer from Releases
+        - Built from source
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Vison version
+      placeholder: "0.1.0, or the commit you built"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Backend output
+      description: |
+        If the backend logged anything, paste it here. Run from a terminal to
+        see it, or check the console in a packaged build.
+      render: shell
+    validations:
+      required: false

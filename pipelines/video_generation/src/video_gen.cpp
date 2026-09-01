@@ -114,6 +114,13 @@ static std::string describe_failure(const char* generic) {
         // slot null and loads exactly as before.
         llm_path_ = declared("llm");
 
+        // MiniMax-H3 jointly denoises video and audio and needs a second,
+        // separate VAE for the audio stream. Every other registered model
+        // leaves this slot null and decodes video only, exactly as before -
+        // upstream's generate_video() already tolerates a missing audio VAE by
+        // producing video without a decoded audio track.
+        audio_vae_path_ = declared("audio_vae");
+
         // The T5 slot is required for Wan, but a model conditioning on an LLM
         // may legitimately have no T5 at all, so the requirement is "some text
         // encoder", not "a T5".
@@ -129,6 +136,7 @@ static std::string describe_failure(const char* generic) {
         params.t5xxl_path           = t5xxl_path_.c_str();
         params.vae_path             = vae_path_.c_str();
         if (!llm_path_.empty()) params.llm_path = llm_path_.c_str();
+        if (!audio_vae_path_.empty()) params.audio_vae_path = audio_vae_path_.c_str();
 
         // Wan 2.2 ships two experts; the second is optional and only used when
         // it is actually present next to the first.
@@ -142,6 +150,7 @@ static std::string describe_failure(const char* generic) {
                   << " t5xxl=" << t5xxl_path_ << " vae=" << vae_path_
                   << (llm_path_.empty() ? "" : (" llm=" + llm_path_))
                   << (high_noise_path_.empty() ? "" : (" high_noise=" + high_noise_path_))
+                  << (audio_vae_path_.empty() ? "" : (" audio_vae=" + audio_vae_path_))
                   << std::endl;
 
 #if defined(VISON_CUDA)
@@ -159,7 +168,7 @@ static std::string describe_failure(const char* generic) {
         // alone asks for a ~3.1GB compute buffer, so a small card needs every
         // bit of the streaming strategy while a large one should skip it.
         const ModelFootprint footprint =
-            measure_footprint({gguf_path, t5xxl_path_, vae_path_, high_noise_path_, llm_path_},
+            measure_footprint({gguf_path, t5xxl_path_, vae_path_, high_noise_path_, llm_path_, audio_vae_path_},
                               {t5xxl_path_, llm_path_});
 
         // Conservative ceiling for video: its graph segments carry a time
@@ -478,13 +487,46 @@ static std::string describe_failure(const char* generic) {
         }
 
         free_sd_images(frames, num_frames);
+
+        // Only Wan/Hunyuan are registered today, and neither produces audio, so
+        // this path is currently unreachable in practice - but the engine
+        // (LTX-style joint video+audio models) already returns real sd_audio_t
+        // buffers, and the write-out/mux code should exist before the first such
+        // model is registered rather than be built alongside it under pressure.
+        std::string audio_wav_path;
+        if (audio && audio->data && audio->sample_count > 0) {
+            audio_wav_path = work_dir + "/audio.wav";
+            std::string wav_error;
+            if (!write_wav_float(audio->data, audio->sample_count, audio->sample_rate,
+                                 audio->channels, audio_wav_path, wav_error)) {
+                std::cerr << "[Vison] Could not write generated audio (" << wav_error
+                          << "); continuing without sound." << std::endl;
+                audio_wav_path.clear();
+            }
+        }
         if (audio) free_sd_audio(audio);
 
         // The container is the muxer's decision, not ours - it depends on which
         // encoders the available ffmpeg actually has.
         const std::string video_path = base + video_output_extension();
         std::string error;
-        if (mux_frames_to_video(work_dir + "/frame%05d.png", gen_params.fps, video_path, error)) {
+        const bool muxed = !audio_wav_path.empty()
+            ? mux_frames_and_audio_to_video(work_dir + "/frame%05d.png", gen_params.fps,
+                                            audio_wav_path, video_path, error)
+            : mux_frames_to_video(work_dir + "/frame%05d.png", gen_params.fps, video_path, error);
+
+        // A model that produced audio but whose ffmpeg build can't encode a
+        // matching audio codec should still get its video rather than nothing -
+        // fall back to the silent mux instead of failing the whole generation.
+        if (!muxed && !audio_wav_path.empty()) {
+            std::cerr << "[Vison] Could not mux audio (" << error
+                      << "); retrying without sound." << std::endl;
+            error.clear();
+        }
+        const bool final_ok = muxed || (!audio_wav_path.empty() &&
+            mux_frames_to_video(work_dir + "/frame%05d.png", gen_params.fps, video_path, error));
+
+        if (final_ok) {
             result.success = true;
             result.output_path = video_path;
             std::cerr << "[Vison] Wrote " << num_frames << " frames to " << video_path
@@ -519,6 +561,7 @@ private:
     std::string vae_path_;
     std::string high_noise_path_;
     std::string llm_path_;
+    std::string audio_vae_path_;
     std::atomic<bool> cancelled_{false};
 };
 

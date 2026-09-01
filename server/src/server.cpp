@@ -470,6 +470,50 @@ json get_default_registry() {
                 "size_bytes": 438643184
               }
             ]
+          },
+{
+            "id": "minimaxai/minimax-h3-fl2va",
+            "description": "Jointly generates video and stereo audio from one packed diffusion transformer - the only model here with sound. A 33B dense architecture conditioned on a 32B vision-language text encoder, larger than anything else in this list.",
+            "name": "MiniMax H3 (Video + Audio)",
+            "advanced": ["gpu_id", "allow_fallback", "tile_size"],
+            "frame_alignment": 17,
+            "frame_alignment_offset": 5,
+            "default_fps": 24,
+            "default_guidance": 1.0,
+            "default_width": 864,
+            "default_height": 480,
+            "_frame_alignment_comment": "Upstream docs/minimax_h3.md: frame count aligns upward to the 17k+5 grid (minimum 5), not Wan's 4k+1 - this is the only registered model using a non-1 alignment offset.",
+            "_fps_comment": "MiniMax-H3 runs at a fixed 24fps; the engine overrides any other requested value, per docs/minimax_h3.md.",
+            "_comment": "FL2VA checkpoint (text/first-last-frame-to-video); Ref2VA also exists upstream for reference-conditioned generation but is not registered here. Support landed in stable-diffusion.cpp ea7f0c8 and stabilized through 487de75 - see PATCHES.md for why the vendored pin stops there. Diffusion weights are unsloth's Q4_K GGUF quant of the 'pruned' checkpoint; the text encoder is MiniMax-H3's own truncated/exported Qwen3-VL-32B, not a stock Qwen3-VL checkpoint. REGISTERED BUT NEVER RUN HERE - at ~35GB combined and a 33B dense transformer, this is far beyond a 6GB card even with CPU offload; nothing about this entry has been confirmed against a real generation. Omitting the audio_vae file still produces video, without a decoded audio track.",
+            "size_gb": 35.45,
+            "vram_min_gb": 24,
+            "files": [
+              {
+                "role": "diffusion",
+                "filename": "minimax_h3_fl2va_pruned-Q4_K.gguf",
+                "url": "https://huggingface.co/unsloth/MiniMax-H3-GGUF/resolve/main/minimax_h3_fl2va_pruned-Q4_K.gguf",
+                "size_bytes": 11420663904
+              },
+              {
+                "role": "llm",
+                "_comment": "MiniMax-H3's own Qwen3-VL-32B export (truncated to 50 language layers, vision tower and DeepStack mergers included) - not interchangeable with a stock Qwen3-VL checkpoint.",
+                "filename": "qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+                "url": "https://huggingface.co/unsloth/MiniMax-H3-GGUF/resolve/main/qwen3vl_32b_minimax_h3-Q4_K_M.gguf",
+                "size_bytes": 18218065024
+              },
+              {
+                "role": "vae",
+                "filename": "minimax_h3_video_vae_fp16.safetensors",
+                "url": "https://huggingface.co/unsloth/MiniMax-H3-GGUF/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors",
+                "size_bytes": 5207808496
+              },
+              {
+                "role": "audio_vae",
+                "filename": "minimax_h3_audio_vae_fp32.safetensors",
+                "url": "https://huggingface.co/unsloth/MiniMax-H3-GGUF/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+                "size_bytes": 605254808
+              }
+            ]
           }
         ],
         "video_upscaling": [

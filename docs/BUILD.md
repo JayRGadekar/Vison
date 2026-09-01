@@ -21,14 +21,22 @@ npx electron-builder --win
 
 Output: `app/release/Vison Setup 0.1.0.exe`.
 
-### Both OAuth values must be set at build time
+### Sign-in is optional — set both OAuth values, or neither
 
-`auth.ts` prefers `process.env.VISON_GOOGLE_CLIENT_ID` and
-`VISON_GOOGLE_CLIENT_SECRET` at runtime and falls back to values baked in by
-`vite.config.ts`. Runtime env works for development, but nobody sets a system
-environment variable to launch a desktop app — so a build intended for
-distribution **must** have both set when `vite build` runs, or every user gets
-the "Sign-in is not configured" screen and the app is unusable.
+You can skip this section entirely. Vison generates and stores everything
+locally, so a build with no OAuth credentials is a complete, working app; the
+account menu simply has no **Sign in** item. That is the normal outcome of
+building from a fresh clone.
+
+If you do want to offer sign-in: `auth.ts` prefers
+`process.env.VISON_GOOGLE_CLIENT_ID` and `VISON_GOOGLE_CLIENT_SECRET` at
+runtime and falls back to values baked in by `vite.config.ts`. Runtime env
+works for development, but nobody sets a system environment variable to launch
+a desktop app — so a build intended for distribution needs both set when
+`vite build` runs.
+
+**Set both or neither.** A build carrying only one is the one case packaging
+refuses, and the reason is below.
 
 Step-by-step setup is in [OAUTH-SETUP.md](OAUTH-SETUP.md). In short: create the
 client in Google Cloud Console → Credentials → OAuth client ID →
@@ -47,14 +55,26 @@ grep -c "apps.googleusercontent.com" app/dist-electron/main.js
 grep -c "GOCSPX-" app/dist-electron/main.js
 ```
 
-Packaging enforces this. `scripts/check-auth-configured.cjs` runs in
-`beforePack` and fails the build if either value is missing from the shipped
-main-process bundle. It inspects the bundle rather than the environment on
-purpose: `vite-plugin-electron` runs a separate build for the main process, so
-a `define` can reach the renderer and miss `main.js` — which is how this shipped
+`scripts/check-auth-configured.cjs` runs in `beforePack` and reports which of
+the three cases you are in:
+
+| In the bundle | What happens |
+|---|---|
+| Both values | Packages; the app offers sign-in. |
+| Neither | Packages with a note; the app runs without sign-in. |
+| Exactly one | **Refused.** |
+
+The last case is refused because Google requires a `client_secret` at the token
+endpoint even for Desktop app clients, so an installer with the ID alone takes
+the user through the account picker and the consent screen and only then fails
+the exchange. Failing after consent is worse than offering no sign-in at all.
+
+It inspects the bundle rather than the environment on purpose:
+`vite-plugin-electron` runs a separate build for the main process, so a
+`define` can reach the renderer and miss `main.js` — which is how this shipped
 broken once. Checking `process.env` would have passed that day.
 
-To build a deliberately unusable installer for local testing, set
+To package a half-configured build anyway, set
 `VISON_ALLOW_UNCONFIGURED_AUTH=1`.
 
 ### Looking at the UI in a browser

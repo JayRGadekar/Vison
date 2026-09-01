@@ -89,7 +89,13 @@ your disk, and generated images and video are written to your own folders. No
 prompt, image, or video is uploaded anywhere.
 
 Two things do reach the network, both only when you ask: downloading model
-weights from Hugging Face, and Google sign-in if it is configured.
+weights from Hugging Face, and Google sign-in.
+
+**Sign-in is optional.** Vison is fully usable without an account — generation,
+upscaling and history all work signed out, and nothing is withheld behind it.
+It exists for people who want it; there is no paid tier for it to unlock. A
+build made without OAuth credentials, which is what you get from a fresh clone,
+simply has no **Sign in** item in its account menu.
 
 ## How it works
 
@@ -119,7 +125,10 @@ load-bearing — without it FLUX is rejected as an unknown architecture. Run
 `scripts/bootstrap-third-party.sh` first.
 
 Bug reports are as valuable as patches, especially on hardware other than a
-6 GB NVIDIA laptop GPU.
+6 GB NVIDIA laptop GPU. There are issue templates for both.
+
+Found something exploitable? [SECURITY.md](SECURITY.md) — it also lists the
+two things that look like vulnerabilities here and are not.
 
 ## Support the project
 
@@ -127,8 +136,16 @@ Vison is free and MIT-licensed, and it will stay that way. There is no paid
 tier, nothing held back, and no plan to add either.
 
 If it is useful to you and you would like to chip in, there is a **Sponsor**
-button at the top of this repository. Entirely optional — a bug report on
-hardware I do not own is worth just as much.
+button at the top of this repository, and the same links live in the app under
+the account menu → **Support Vison**. Entirely optional — a bug report on
+hardware I do not own is worth just as much, and the app says so too.
+
+What money goes to, concretely: hardware Vison has never been tested on (three
+of the models above have never been run at all), and a code signing
+certificate, so the installer stops tripping SmartScreen.
+
+The links shown in the app come from `app/src/support-links.ts`; the ones on
+the repository page come from `.github/FUNDING.yml`. Keep the two in step.
 
 ## Licence
 

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -231,6 +233,125 @@ inline bool mux_frames_to_video(const std::string& frame_pattern,
 
     if (detail::run_quiet(cmd) != 0) {
         error = "ffmpeg failed to mux frames into " + out_path;
+        return false;
+    }
+    std::error_code ec;
+    if (!std::filesystem::exists(out_path, ec)) {
+        error = "ffmpeg reported success but produced no file";
+        return false;
+    }
+    return true;
+}
+
+// Writes a raw float waveform (as produced by sd_audio_t: sample_count
+// interleaved frames of `channels` 32-bit floats each) as a standard
+// IEEE-float WAV file. ffmpeg reads WAV natively, so this is the simplest
+// correct intermediate container to hand it - no need to vendor an encoder
+// just to get audio from a float buffer into ffmpeg's -i.
+inline bool write_wav_float(const float* data, uint64_t sample_count,
+                            uint32_t sample_rate, uint32_t channels,
+                            const std::string& out_path, std::string& error) {
+    if (!data || sample_count == 0 || channels == 0 || sample_rate == 0) {
+        error = "empty or invalid audio buffer";
+        return false;
+    }
+
+    std::ofstream f(out_path, std::ios::binary);
+    if (!f) {
+        error = "could not open " + out_path + " for writing";
+        return false;
+    }
+
+    const uint32_t bits_per_sample = 32;
+    const uint32_t byte_rate = sample_rate * channels * (bits_per_sample / 8);
+    const uint16_t block_align = static_cast<uint16_t>(channels * (bits_per_sample / 8));
+    const uint32_t data_bytes = static_cast<uint32_t>(sample_count * channels * (bits_per_sample / 8));
+    const uint32_t riff_size = 36 + data_bytes;
+
+    auto write_u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto write_u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+
+    f.write("RIFF", 4);
+    write_u32(riff_size);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    write_u32(16);          // fmt chunk size
+    write_u16(3);            // WAVE_FORMAT_IEEE_FLOAT
+    write_u16(static_cast<uint16_t>(channels));
+    write_u32(sample_rate);
+    write_u32(byte_rate);
+    write_u16(block_align);
+    write_u16(static_cast<uint16_t>(bits_per_sample));
+    f.write("data", 4);
+    write_u32(data_bytes);
+    f.write(reinterpret_cast<const char*>(data), data_bytes);
+
+    if (!f.good()) {
+        error = "failed writing WAV data to " + out_path;
+        return false;
+    }
+    return true;
+}
+
+// The audio encoder that pairs with whichever container video_encoder()
+// picked. Opus for WebM matches the video encoder's licensing stance (BSD,
+// royalty-free); AAC for the mpeg4 fallback container, which is already the
+// GPL/patent-avoidant path's worse option, so a widely-supported but
+// licensed codec there doesn't add a new constraint beyond what that
+// fallback already accepts. Empty means "mux video without audio".
+inline const std::string& audio_encoder_args() {
+    static const std::string args = [] {
+        const std::string encoders =
+            ffmpeg_available() ? detail::capture(detail::quote(ffmpeg_path()) +
+                                                 " -hide_banner -encoders") : std::string();
+        auto has = [&encoders](const char* name) {
+            return encoders.find(name) != std::string::npos;
+        };
+        if (video_output_extension() == ".webm") {
+            if (has("libopus")) return std::string("-c:a libopus -b:a 128k");
+            if (has("libvorbis")) return std::string("-c:a libvorbis -q:a 4");
+            return std::string();
+        }
+        if (has("aac")) return std::string("-c:a aac -b:a 128k");
+        return std::string();
+    }();
+    return args;
+}
+
+// Same as mux_frames_to_video, but also mixes in a WAV audio track (e.g. one
+// written by write_wav_float). `-shortest` trims to the shorter of the two
+// streams, since a decoder-produced audio tail can run a few samples past or
+// short of the frame count.
+inline bool mux_frames_and_audio_to_video(const std::string& frame_pattern,
+                                          int fps,
+                                          const std::string& audio_path,
+                                          const std::string& out_path,
+                                          std::string& error) {
+    if (!ffmpeg_available()) {
+        error = "ffmpeg not found";
+        return false;
+    }
+    if (!path_is_shell_safe(frame_pattern) || !path_is_shell_safe(out_path) ||
+        !path_is_shell_safe(audio_path)) {
+        error = "refusing to run ffmpeg on a path containing shell metacharacters";
+        return false;
+    }
+    const std::string& audio_args = audio_encoder_args();
+    if (audio_args.empty()) {
+        error = "no compatible audio encoder available in this ffmpeg build";
+        return false;
+    }
+
+    const std::string cmd =
+        detail::quote(ffmpeg_path()) + " -y -framerate " + std::to_string(fps <= 0 ? 16 : fps) +
+        " -i " + detail::quote(frame_pattern) +
+        " -i " + detail::quote(audio_path) + " " +
+        video_encoder().args + " " + audio_args +
+        " -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" -shortest " +
+        detail::quote(out_path);
+
+    if (detail::run_quiet(cmd) != 0) {
+        error = "ffmpeg failed to mux frames and audio into " + out_path;
         return false;
     }
     std::error_code ec;

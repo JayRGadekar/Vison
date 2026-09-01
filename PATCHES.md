@@ -33,7 +33,36 @@ cd third_party/<dep> && git status --short && git diff --ignore-cr-at-eol --igno
 ## third_party/stable-diffusion.cpp
 
 Upstream: <https://github.com/leejet/stable-diffusion.cpp.git>
-Pinned at: `db99efd` ("refactor: extract model loader initialization (#1844)"), branch `master`
+Pinned at: `487de75` ("fix: fail with a message when MiniMax-H3 is run in img_gen mode (#1863)"), branch `master`
+
+Bumped from `db99efd` (Aug 2) on 2026-08-30 to pick up upstream's native
+MiniMax-H3 support (`ea7f0c8` and its stabilizing follow-ups through
+`487de75`), needed to add that model to Vison's registry.
+
+**Deliberately not bumped further to current upstream HEAD.** The very next
+commit, `bcc7e29` ("feat: support INT8 ConvRot safetensors"), adds calls to
+`ggml_mul_mat_i8_tensorwise` / `ggml_quantize_i8_convrot` and the
+`GGML_TYPE_F8_E4M3`/`GGML_TYPE_F8_E5M2` enum values to `src/core/ggml_extend.hpp`
+that do not exist in the `ggml` commit this project actually links. That is
+not an isolated version skew: `third_party/vision.cpp` bundles its *own* fork
+of ggml (`depend/llama/ggml`, currently `5fde0fae4`, with `[VISION]`-prefixed
+Vulkan-op commits of its own), and `third_party/cmakelists.txt` adds
+`vision.cpp` before `stable-diffusion.cpp` (`add_subdirectory(vision.cpp)`
+then `add_subdirectory(stable-diffusion.cpp)`). Both vendor a CMake target
+literally named `ggml`; stable-diffusion.cpp's own `CMakeLists.txt` only adds
+its (newer) `ggml` submodule `if (NOT TARGET ggml)`, so whichever
+subdirectory runs first wins the shared target for the whole build - which is
+vision.cpp's older fork today. The two ggml copies cannot simply be
+reconciled by bumping one of them: they are independently-maintained forks
+that have each added their own backend-specific ops, and only one `ggml`
+target can exist in a single link unit (two independent definitions of e.g.
+`ggml_mul_mat` would be an ODR/link conflict in the final `vison_server`).
+Any future bump past `487de75` needs one of: updating vision.cpp's bundled
+ggml fork to a version that is a superset of both forks' additions, or a
+different resolution of the shared-target collision - not just moving the
+stable-diffusion.cpp pin forward. `1706b32` (upstream's own fix for the VRAM
+clamp bug, patch 2 below) landed after this pin for the same reason: it is
+not included here, so patch 2 is still carried locally.
 
 ### 1. `src/model_loader.cpp` — recognise bare FLUX tensor names **(load-bearing)**
 
@@ -104,8 +133,12 @@ chosen under the earlier larger `planner_budget`. `annotate_residency()` recompu
 residency correctly, but the segments themselves may be oversized. No aborts were observed,
 but this is not proven safe.
 
-This is an upstream bug and **should be reported to leejet/stable-diffusion.cpp**; drop
-the patch once it is fixed there.
+Upstream fixed the same underlying bug independently in `1706b32` ("fix: re-clamp
+streaming VRAM budget to currently free memory (#1878)"), with an equivalent effect
+(`std::min(observed_max_effective_budget_, free_clamp)` instead of blindly restoring the
+high-water mark) — but that commit lands after the `487de75` pin above (see the "not
+bumped further" note), so it is not yet available and this patch stays. **Drop this patch
+in favor of upstream's fix the next time the pin moves far enough to include `1706b32`.**
 
 ### 3. `CMakeLists.txt` — build integration
 

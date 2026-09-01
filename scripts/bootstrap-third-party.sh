@@ -15,7 +15,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TP="$ROOT/third_party"
 
 SD_URL="https://github.com/leejet/stable-diffusion.cpp.git"
-SD_REF="db99efd"
+SD_REF="487de75"
 VC_URL="https://github.com/Acly/vision.cpp.git"
 VC_REF="26a7529"
 
