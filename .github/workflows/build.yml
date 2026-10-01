@@ -154,7 +154,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $required = @('vison_server.exe','ggml.dll','ggml-base.dll','ggml-cpu.dll','ggml-vulkan.dll','visioncpp.dll')
+          # GGML_CPU_ALL_VARIANTS builds ggml-cpu-<isa>.dll (no plain ggml-cpu.dll);
+          # ggml-cpu-x64.dll is the baseline every runner and user CPU can load.
+          $required = @('vison_server.exe','ggml.dll','ggml-base.dll','ggml-cpu-x64.dll','ggml-vulkan.dll','visioncpp.dll')
           $missing = $required | Where-Object { -not (Test-Path "build/bin/$_") }
           Get-ChildItem build/bin | Format-Table Name, Length
           if ($missing) {
