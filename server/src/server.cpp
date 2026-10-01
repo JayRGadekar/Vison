@@ -3,6 +3,7 @@
 #include "vison/vison.h"
 #include "vison/queue.h"
 #include "vison/download.h"
+#include "vison/hf_link.h"
 #include "vison/pipelines/video_io.h"
 #include <iostream>
 #include <fstream>
@@ -146,7 +147,7 @@ bool base64_decode(const std::string& input, std::string& out) {
 //
 // size_bytes is the exact Content-Length used to verify a completed download.
 // 0 means "unknown", which skips the size check but still enforces format magic.
-json get_default_registry() {
+json base_registry() {
     return json::parse(R"JSON({
       "version": 2,
       "models": {
@@ -289,17 +290,34 @@ json get_default_registry() {
         ],
         "image_upscaling": [
           {
-            "id": "realesrgan-x4plus",
-            "description": "Upscales by 2x or 4x while restoring detail, rather than just interpolating. Tiny, fast, and runs on anything.",
-            "name": "Real-ESRGAN x4",
+            "id": "esrgan-4x-remacri",
+            "description": "Upscales by 2x or 4x while restoring detail, rather than just interpolating. Keeps photographic texture - skin, hair, foliage, grain - which is what the generation models above spend their size on. Small, fast, and runs on anything.",
+            "name": "ESRGAN 4x Remacri (Photographic)",
             "advanced": ["tta_mode", "allow_fallback", "compression"],
+            "_comment": "A general-purpose 4x ESRGAN, and the right default for the output of every generation model registered here. The entry that used to sit here was named 'Real-ESRGAN x4' but pointed at RealESRGAN-x4plus_anime-6B: an anime-tuned 6-block network whose whole training objective is to flatten the texture photoreal output depends on. That swap came from fixing a 404 by taking the nearest filename in the repo without renaming the entry, and it silently made the anime model the only upscaler Vison had - applied to FLUX and Qwen-Image stills and to Wan and HunyuanVideo footage alike. Weights are Acly's own GGUF conversions, i.e. by the author of the vision.cpp we vendor to run them.",
+            "size_gb": 0.03,
+            "vram_min_gb": 1,
+            "files": [
+              {
+                "role": "diffusion",
+                "filename": "ESRGAN-4x-Remacri-F16.gguf",
+                "url": "https://huggingface.co/Acly/Real-ESRGAN-GGUF/resolve/main/ESRGAN-4x-foolhardy_Remacri-F16.gguf",
+                "size_bytes": 33451392
+              }
+            ]
+          },
+          {
+            "id": "realesrgan-x4plus-anime-6b",
+            "description": "Upscales drawn and animated art - line work, flat colour, cel shading. Deliberately smooths photographic texture, so use the photographic upscaler above for anything meant to look real.",
+            "name": "Real-ESRGAN x4 Anime 6B (Illustration)",
+            "advanced": ["tta_mode", "allow_fallback", "compression"],
+            "_comment": "The weights the old 'Real-ESRGAN x4' entry actually downloaded, now registered under what they are rather than as the general-purpose model. Kept because the Python backend this was ported from offered a separate anime upscaler (Saiki/Real-ESRGAN-ANIME) and the port lost it; on stylised output it is the better model, and at 8.5 MB it costs nothing to keep.",
             "size_gb": 0.01,
             "vram_min_gb": 1,
             "files": [
               {
                 "role": "diffusion",
-                "filename": "realesrgan-x4plus.gguf",
-                "_comment": "The old RealESRGAN_x4plus.gguf path 404s; this is the actual filename published in that repo.",
+                "filename": "RealESRGAN-x4plus-anime-6B-F16.gguf",
                 "url": "https://huggingface.co/Acly/Real-ESRGAN-GGUF/resolve/main/RealESRGAN-x4plus_anime-6B-F16.gguf",
                 "size_bytes": 8950752
               }
@@ -485,7 +503,7 @@ json get_default_registry() {
             "_frame_alignment_comment": "Upstream docs/minimax_h3.md: frame count aligns upward to the 17k+5 grid (minimum 5), not Wan's 4k+1 - this is the only registered model using a non-1 alignment offset.",
             "_fps_comment": "MiniMax-H3 runs at a fixed 24fps; the engine overrides any other requested value, per docs/minimax_h3.md.",
             "_comment": "FL2VA checkpoint (text/first-last-frame-to-video); Ref2VA also exists upstream for reference-conditioned generation but is not registered here. Support landed in stable-diffusion.cpp ea7f0c8 and stabilized through 487de75 - see PATCHES.md for why the vendored pin stops there. Diffusion weights are unsloth's Q4_K GGUF quant of the 'pruned' checkpoint; the text encoder is MiniMax-H3's own truncated/exported Qwen3-VL-32B, not a stock Qwen3-VL checkpoint. REGISTERED BUT NEVER RUN HERE - at ~35GB combined and a 33B dense transformer, this is far beyond a 6GB card even with CPU offload; nothing about this entry has been confirmed against a real generation. Omitting the audio_vae file still produces video, without a decoded audio track.",
-            "size_gb": 35.45,
+            "size_gb": 33.02,
             "vram_min_gb": 24,
             "files": [
               {
@@ -514,21 +532,82 @@ json get_default_registry() {
                 "size_bytes": 605254808
               }
             ]
+          },
+{
+            "id": "lightricks/ltx-2.5-distilled",
+            "description": "Lightricks' LTX 2.5, distilled: generates video and synchronized audio in a few steps. Text-to-video and image-to-video, with the audio track decoded alongside.",
+            "name": "LTX 2.5 Distilled (Video + Audio)",
+            "advanced": ["gpu_id", "allow_fallback", "tile_size"],
+            "frame_alignment": 8,
+            "frame_alignment_offset": 1,
+            "default_fps": 24,
+            "default_guidance": 1.0,
+            "default_width": 768,
+            "default_height": 432,
+            "default_steps": 8,
+            "_frame_alignment_comment": "LTX's video VAE compresses time 8:1, so valid frame counts are 8k+1 (9, 17, 25, 33...). Unverified against the engine's align_video_frames for this model - confirm on first real run.",
+            "_negative_prompt_comment": "Deliberately none: this is a distilled checkpoint run at guidance 1.0, where a negative prompt has no effect.",
+            "_comment": "Needs the upstream LTX-2.5 commit (stable-diffusion.cpp afd5306, #1893), carried as third_party/patches/0002 on top of the 487de75 pin - see PATCHES.md. The text encoder is Lightricks' Gemma 4 12B fine-tune with the text projection bundled in, so there is no embeddings-connectors file (unlike LTX 2.3); stock Gemma 4 is not a substitute. The video VAE must be the CONV variant - the default ltx-2.5-video-vae-bf16.safetensors is a diffusion decoder the engine does not implement. Diffusion weights are Abiray's Q4_K_M GGUF of the distilled checkpoint; the text encoder is elix3r's Q4_K_M GGUF of the Gemma 4 + projection. The VAEs come from Lightricks/LTX-2.5, which Hugging Face marks as auto-gated (licence acceptance) - the download may need a logged-in token. Steps/guidance are distilled-model defaults, not taken from a reference config. REGISTERED BUT NEVER RUN HERE - about 26GB combined; nothing about this entry has been confirmed against a real generation.",
+            "size_gb": 25.92,
+            "vram_min_gb": 16,
+            "files": [
+              {
+                "role": "diffusion",
+                "filename": "LTX-2.5-Distilled-Q4_K_M.gguf",
+                "url": "https://huggingface.co/Abiray/LTX-2.5-Distilled-GGUF/resolve/main/LTX-2.5-Distilled-Q4_K_M.gguf",
+                "size_bytes": 15687639488
+              },
+              {
+                "role": "llm",
+                "filename": "gemma4-12b-with-proj-ltx-2.5-Q4_K_M.gguf",
+                "url": "https://huggingface.co/elix3r/gemma4-12b-with-proj-ltx-2.5-GGUF/resolve/main/gemma4-12b-with-proj-ltx-2.5-Q4_K_M.gguf",
+                "size_bytes": 8414653376
+              },
+              {
+                "role": "vae",
+                "filename": "ltx-2.5-video-vae-conv-bf16.safetensors",
+                "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-video-vae-conv-bf16.safetensors",
+                "size_bytes": 1452269922
+              },
+              {
+                "role": "audio_vae",
+                "filename": "ltx-2.5-audio-vae-bf16.safetensors",
+                "url": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/vae/ltx-2.5-audio-vae-bf16.safetensors",
+                "size_bytes": 364866540
+              }
+            ]
           }
         ],
         "video_upscaling": [
           {
-            "id": "realesrgan-x4plus",
-            "description": "Upscales by 2x or 4x while restoring detail, rather than just interpolating. Tiny, fast, and runs on anything.",
-            "name": "Real-ESRGAN x4 (per frame)",
+            "id": "esrgan-4x-remacri",
+            "description": "Upscales by 2x or 4x while restoring detail, rather than just interpolating. Keeps photographic texture, which is what the video models above spend their size on. Small, fast, and runs on anything.",
+            "name": "ESRGAN 4x Remacri (Photographic, per frame)",
             "advanced": ["allow_fallback", "compression"],
             "_comment": "Same weights as the image_upscaling entry - video upscaling runs it frame by frame - so listing it here costs no extra download.",
+            "size_gb": 0.03,
+            "vram_min_gb": 1,
+            "files": [
+              {
+                "role": "diffusion",
+                "filename": "ESRGAN-4x-Remacri-F16.gguf",
+                "url": "https://huggingface.co/Acly/Real-ESRGAN-GGUF/resolve/main/ESRGAN-4x-foolhardy_Remacri-F16.gguf",
+                "size_bytes": 33451392
+              }
+            ]
+          },
+          {
+            "id": "realesrgan-x4plus-anime-6b",
+            "description": "Upscales drawn and animated footage - line work, flat colour, cel shading. Deliberately smooths photographic texture, so use the photographic upscaler above for anything meant to look real.",
+            "name": "Real-ESRGAN x4 Anime 6B (Illustration, per frame)",
+            "advanced": ["allow_fallback", "compression"],
+            "_comment": "Same weights as the image_upscaling entry of the same id.",
             "size_gb": 0.01,
             "vram_min_gb": 1,
             "files": [
               {
                 "role": "diffusion",
-                "filename": "realesrgan-x4plus.gguf",
+                "filename": "RealESRGAN-x4plus-anime-6B-F16.gguf",
                 "url": "https://huggingface.co/Acly/Real-ESRGAN-GGUF/resolve/main/RealESRGAN-x4plus_anime-6B-F16.gguf",
                 "size_bytes": 8950752
               }
@@ -537,6 +616,63 @@ json get_default_registry() {
         ]
       }
     })JSON");
+}
+
+// --- Custom (user-added) models ---------------------------------------------
+//
+// A model the user added from a Hugging Face link is stored as an ordinary
+// registry entry in custom_models.json beside the models directory, and merged
+// into the registry below. Everything that already works from the registry -
+// listing, download with resume and verification, compatibility gating,
+// generation, deletion - therefore applies to custom models unchanged.
+std::mutex g_custom_mutex;
+
+std::string custom_models_path() { return data_path("custom_models.json"); }
+
+// Entries are tagged with the registry category they belong in.
+json load_custom_entries() {
+    std::lock_guard<std::mutex> lock(g_custom_mutex);
+    std::ifstream in(custom_models_path());
+    if (!in) return json::array();
+    try {
+        json j = json::parse(in);
+        if (j.is_array()) return j;
+        if (j.contains("models") && j["models"].is_array()) return j["models"];
+    } catch (const std::exception& e) {
+        std::cerr << "[Custom] ignoring unreadable custom_models.json: " << e.what() << std::endl;
+    }
+    return json::array();
+}
+
+bool save_custom_entries(const json& entries) {
+    std::lock_guard<std::mutex> lock(g_custom_mutex);
+    const std::string path = custom_models_path();
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) return false;
+        out << json{{"version", 1}, {"models", entries}}.dump(2);
+        if (!out.good()) return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        std::filesystem::remove(path, ec);
+        std::filesystem::rename(tmp, path, ec);
+    }
+    return !ec;
+}
+
+json get_default_registry() {
+    json registry = base_registry();
+    for (const auto& e : load_custom_entries()) {
+        const std::string cat = e.value("category", "");
+        if (cat != "image_generation" && cat != "video_generation") continue;
+        json entry = e;
+        entry.erase("category");
+        registry["models"][cat].push_back(entry);
+    }
+    return registry;
 }
 
 // Endpoints to try for a given file, in order. huggingface.co is primary; the
@@ -972,11 +1108,171 @@ int main(int argc, char** argv) {
         return removed;
     };
 
+    // --- Add a model from a Hugging Face link ---------------------------------
+    //
+    // Step 1: turn whatever the user pasted into a list of candidate files and a
+    // best guess at the model family. Nothing is written and nothing large is
+    // downloaded - only the repo file listing is fetched.
+    svr.Post("/api/models/custom/resolve", [&](const httplib::Request& req, httplib::Response& res) {
+        add_cors(res);
+        auto fail = [&](const std::string& msg) {
+            res.set_content(json{{"status", "error"}, {"message", msg}}.dump(), "application/json");
+        };
+        try {
+            auto body = json::parse(req.body);
+            vison::HfLink link = vison::parse_hf_link(body.value("url", ""));
+            if (!link.ok) { fail(link.error); return; }
+
+            json files = json::array();
+            if (!link.file.empty()) {
+                uint64_t size = vison::probe_remote_size(vison::hf_resolve_url(link, link.file));
+                files.push_back({{"path", link.file}, {"size", size},
+                                 {"family", vison::detect_family(link.repo, link.file).id}});
+            } else {
+                std::string listing, err;
+                int status = 0;
+                const std::string api = "https://huggingface.co/api/models/" + link.repo +
+                                        "/tree/" + link.revision + "?recursive=true";
+                if (!vison::http_get_string(api, listing, status, err)) {
+                    if (status == 404) fail("Repository or revision not found: " + link.repo);
+                    else if (status == 401 || status == 403) fail("Repository not found, or it is private or gated. Vison can only download public files.");
+                    else fail("Could not read the repository listing (" + err + ")");
+                    return;
+                }
+                json tree = json::parse(listing, nullptr, false);
+                if (!tree.is_array()) { fail("Unexpected response from Hugging Face."); return; }
+                for (const auto& f : tree) {
+                    if (f.value("type", "") != "file") continue;
+                    const std::string path = f.value("path", "");
+                    if (!vison::is_main_model_candidate(path)) continue;
+                    uint64_t size = f.value("size", (uint64_t)0);
+                    if (f.contains("lfs") && f["lfs"].contains("size")) size = f["lfs"].value("size", size);
+                    files.push_back({{"path", path}, {"size", size},
+                                     {"family", vison::detect_family(link.repo, path).id}});
+                }
+                if (files.empty()) { fail("No .gguf or .safetensors model files found in " + link.repo); return; }
+            }
+
+            json families = json::array();
+            int n = 0;
+            const vison::HfFamily* all = vison::hf_families(&n);
+            for (int i = 0; i < n; ++i) {
+                families.push_back({{"id", all[i].id}, {"name", all[i].name}, {"task", all[i].task}});
+            }
+            res.set_content(json{{"status", "ok"},
+                                 {"repo", link.repo},
+                                 {"revision", link.revision},
+                                 {"family", vison::detect_family(link.repo, "").id},
+                                 {"files", files},
+                                 {"families", families}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            fail(e.what());
+        }
+    });
+
+    // Step 2: register the chosen file. The new entry is a copy of the chosen
+    // family registry entry with the main weights swapped for the user's file,
+    // so the family's text encoder, VAE and defaults come along automatically.
+    svr.Post("/api/models/custom", [&](const httplib::Request& req, httplib::Response& res) {
+        add_cors(res);
+        auto fail = [&](const std::string& msg) {
+            res.set_content(json{{"status", "error"}, {"message", msg}}.dump(), "application/json");
+        };
+        try {
+            auto body = json::parse(req.body);
+            vison::HfLink link = vison::parse_hf_link(body.value("url", ""));
+            if (!link.ok) { fail(link.error); return; }
+            std::string file = body.value("file", link.file);
+            if (file.empty()) { fail("Choose a model file."); return; }
+            if (file.find("..") != std::string::npos || !vison::is_main_model_candidate(file)) {
+                fail("Only .gguf and .safetensors model files can be added.");
+                return;
+            }
+
+            vison::HfFamily family = vison::family_by_id(body.value("family", ""));
+            if (family.id.empty()) family = vison::detect_family(link.repo, file);
+            if (family.id.empty()) {
+                fail("Vison could not tell which model family this is. Pick one explicitly.");
+                return;
+            }
+
+            json entry = find_model_entry(family.template_id);
+            if (entry.is_null() || !entry.contains("files")) { fail("Internal error: missing family template."); return; }
+
+            auto lower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                return s;
+            };
+            const size_t slash = file.find_last_of('/');
+            std::string stem = file.substr(slash == std::string::npos ? 0 : slash + 1);
+            stem = stem.substr(0, stem.find_last_of('.'));
+            const std::string id = "custom/" + lower(link.repo) + "/" + lower(stem);
+
+            const std::string url = vison::hf_resolve_url(link, file);
+            uint64_t size = body.value("size", (uint64_t)0);
+            if (size == 0) size = vison::probe_remote_size(url);
+
+            // Start from the template minus its prose: the comments describe
+            // that specific checkpoint and would be wrong for this one.
+            auto strip_comments = [](json& obj) {
+                for (auto it = obj.begin(); it != obj.end();) {
+                    if (!it.key().empty() && it.key()[0] == '_') it = obj.erase(it); else ++it;
+                }
+            };
+            strip_comments(entry);
+            entry.erase("quantizations");
+            for (auto& f : entry["files"]) strip_comments(f);
+
+            uint64_t total = 0;
+            for (auto& f : entry["files"]) {
+                if (f.value("role", "") == "diffusion") {
+                    f["filename"] = vison::safe_local_name(link.repo, file);
+                    f["url"] = url;
+                    f["size_bytes"] = size;
+                }
+                total += f.value("size_bytes", (uint64_t)0);
+            }
+            entry["id"] = id;
+            entry["name"] = stem + " (Custom)";
+            entry["description"] = "Added from huggingface.co/" + link.repo + " (" + file +
+                                   "). Runs with the " + family.name +
+                                   " pipeline and that family's standard text encoder and VAE.";
+            entry["custom"] = true;
+            entry["source"] = {{"repo", link.repo}, {"revision", link.revision},
+                               {"file", file}, {"family", family.id}};
+            entry["size_gb"] = (double)total / 1e9;
+            // The template sampler defaults belong to its own checkpoint (SDXL
+            // Turbo 4 steps / cfg 1.0 are wrong for an ordinary SDXL model).
+            if (family.id == "sdxl") { entry["default_steps"] = 25; entry["default_guidance"] = 7.0; }
+
+            json kept = json::array();
+            for (const auto& e : load_custom_entries()) if (e.value("id", "") != id) kept.push_back(e);
+            json stored = entry;
+            stored["category"] = family.task == "video" ? "video_generation" : "image_generation";
+            kept.push_back(stored);
+            if (!save_custom_entries(kept)) { fail("Could not save the custom model list."); return; }
+
+            std::cout << "[Custom] registered " << id << " (" << family.id << ")" << std::endl;
+            res.set_content(json{{"status", "ok"}, {"model", entry}, {"task", family.task}}.dump(), "application/json");
+        } catch (const std::exception& e) {
+            fail(e.what());
+        }
+    });
+
     svr.Delete(R"(/api/models/(.*))", [&](const httplib::Request& req, httplib::Response& res) {
         add_cors(res);
         std::string model_id = url_decode(req.matches[1]);
         int removed = remove_model_files(model_id);
-        res.set_content(json{{"status", "success"}, {"removed", removed}}.dump(), "application/json");
+        // ?forget=1 also unregisters a user-added model; built-ins stay listed.
+        bool forgotten = false;
+        if (req.has_param("forget")) {
+            json kept = json::array();
+            for (const auto& e : load_custom_entries()) {
+                if (e.value("id", "") == model_id) forgotten = true; else kept.push_back(e);
+            }
+            if (forgotten) save_custom_entries(kept);
+        }
+        res.set_content(json{{"status", "success"}, {"removed", removed}, {"forgotten", forgotten}}.dump(), "application/json");
     });
 
     svr.Post(R"(/api/models/(.*)/reset-cache)", [&](const httplib::Request& req, httplib::Response& res) {
@@ -1412,7 +1708,7 @@ int main(int argc, char** argv) {
                 cleanup_temp();
                 json resp = {
                     {"status", "error"},
-                    {"message", "Upscaling needs an image. Attach one and try again."}
+                    {"message", "Upscaling needs an input file. Attach an image or video and try again."}
                 };
                 res.set_content(resp.dump(), "application/json");
                 return;

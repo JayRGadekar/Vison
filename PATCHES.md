@@ -161,6 +161,18 @@ changed. Use `--ignore-cr-at-eol --ignore-all-space` to see the real diff.
 
 ---
 
+### 4. LTX-2.5 support — cherry-picked upstream `afd5306` (#1893)
+
+`third_party/patches/0002-ltx-2.5-support-upstream-afd5306.patch` is upstream's
+"feat: add LTX-2.5 support" commit, applied on top of the `487de75` pin without
+moving the pin. It touches only `conditioner.hpp`, `block.hpp`, `ltxv.hpp`,
+`llm.hpp`, `name_conversion.cpp`, `docs/ltx2.md` and `README.md`, and applies
+cleanly, so it avoids the full bump that the ggml fork collision above rules out
+(the commits between the pin and `afd5306` include `bcc7e29`, which needs ggml
+symbols vision.cpp's fork lacks). Drop the patch the next time the pin moves
+past `afd5306`. The `vison_server` target builds with it; no LTX-2.5
+generation has been run yet.
+
 ## third_party/vision.cpp
 
 Upstream: <https://github.com/Acly/vision.cpp.git>

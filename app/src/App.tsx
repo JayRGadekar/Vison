@@ -183,6 +183,11 @@ function App() {
   // Auth gate. `null` means "still checking" - distinct from "signed out", so
   // the sign-in screen does not flash on every launch for an existing session.
   const [authUser, setAuthUser] = useState<AuthUser | null | undefined>(undefined);
+  // The Google photo URL can fail to load (offline, blocked, expired). Hiding
+  // the <img> alone left an empty gap, so remember the failure and fall back to
+  // the default avatar instead.
+  const [pictureFailed, setPictureFailed] = useState(false);
+  useEffect(() => { setPictureFailed(false); }, [authUser?.picture]);
   const [authConfigured, setAuthConfigured] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -191,13 +196,21 @@ function App() {
   const [selectedModel, setSelectedModel] = useState({ id: "stabilityai/sdxl-turbo", name: "SDXL Turbo", task: "image" });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [searchModel, setSearchModel] = useState("");
-  const [messages, setMessages] = useState<{ role: string, content: string, url?: string, baseImage?: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: string, content: string, url?: string, baseImage?: string, baseKind?: 'image' | 'video' }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   
   // App views
   const [currentView, setCurrentView] = useState('chat'); // 'chat' | 'library'
   const [libraryModels, setLibraryModels] = useState<{ image: any[], video: any[], image_upscale: any[], video_upscale: any[] }>({ image: [], video: [], image_upscale: [], video_upscale: [] });
+  // "Add from Hugging Face" dialog.
+  const [hfOpen, setHfOpen] = useState(false);
+  const [hfUrl, setHfUrl] = useState('');
+  const [hfBusy, setHfBusy] = useState(false);
+  const [hfError, setHfError] = useState<string | null>(null);
+  const [hfResolved, setHfResolved] = useState<any>(null);
+  const [hfFile, setHfFile] = useState('');
+  const [hfFamily, setHfFamily] = useState('');
   const [activeTab, setActiveTab] = useState('image'); // 'image' | 'image_upscale' | 'video' | 'video_upscale'
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [taskMode, setTaskMode] = useState<'generate' | 'upscale'>('generate');
@@ -229,6 +242,8 @@ function App() {
 
   // Attachments
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  // Upscaling takes an image or a video depending on the Image/Video toggle.
+  const [attachedKind, setAttachedKind] = useState<'image' | 'video'>('image');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Settings State
@@ -709,14 +724,29 @@ function App() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAttachedImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    // Reset so picking the same file again after clearing it still fires.
+    e.target.value = '';
+    if (!file) return;
+    const kind = file.type.startsWith('video/') ? 'video' : 'image';
+    if (taskMode === 'upscale' && kind !== mediaType) {
+      alert(`Select a${mediaType === 'image' ? 'n image' : ' video'} file to upscale.`);
+      return;
     }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAttachedKind(kind);
+      setAttachedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
   };
+
+  // An attachment of the wrong kind for the current mode would only fail at
+  // submit time, so drop it as soon as the mode changes.
+  useEffect(() => {
+    if (!attachedImage) return;
+    const wantsKind = taskMode === 'upscale' ? mediaType : 'image';
+    if (attachedKind !== wantsKind) setAttachedImage(null);
+  }, [taskMode, mediaType]);
 
 const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       e.stopPropagation(); // prevent model selection jump
@@ -782,15 +812,79 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       }
   };
 
+  const closeHfDialog = () => {
+    setHfOpen(false);
+    setHfUrl('');
+    setHfError(null);
+    setHfResolved(null);
+    setHfFile('');
+    setHfFamily('');
+  };
+
+  // Step 1: read the link and list candidate files. Downloads nothing.
+  const handleHfResolve = async () => {
+    setHfBusy(true);
+    setHfError(null);
+    setHfResolved(null);
+    try {
+      const res = await backendRequest('/api/models/custom/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: hfUrl }),
+      });
+      const data = res.data;
+      if (data?.status !== 'ok') { setHfError(data?.message || 'Could not read that link.'); return; }
+      setHfResolved(data);
+      const first = data.files.find((f: any) => f.family) || data.files[0];
+      setHfFile(first.path);
+      setHfFamily(first.family || data.family || '');
+    } catch (err) {
+      setHfError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHfBusy(false);
+    }
+  };
+
+  // Step 2: register the chosen file; it then appears in the library like any
+  // other model, ready to download.
+  const handleHfAdd = async () => {
+    setHfBusy(true);
+    setHfError(null);
+    try {
+      const picked = hfResolved.files.find((f: any) => f.path === hfFile);
+      const res = await backendRequest('/api/models/custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: hfUrl, file: hfFile, family: hfFamily, size: picked?.size || 0 }),
+      });
+      const data = res.data;
+      if (data?.status !== 'ok') { setHfError(data?.message || 'Could not add that model.'); return; }
+      const refreshed = await backendRequest('/api/models');
+      setLibraryModels(refreshed.data);
+      setActiveTab(data.task === 'video' ? 'video' : 'image');
+      closeHfDialog();
+    } catch (err) {
+      setHfError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHfBusy(false);
+    }
+  };
+
   const handleModelDelete = async (e: React.MouseEvent, modelId: string) => {
       e.stopPropagation();
       if (!confirm(`Are you sure you want to delete ${modelId}?`)) return;
       try {
-        const res = await backendRequest(`/api/models/${encodeURIComponent(modelId)}`, {
+        const isCustom = [...(libraryModels.image || []), ...(libraryModels.video || [])]
+          .some((m: any) => m.id === modelId && m.custom);
+        const res = await backendRequest(`/api/models/${encodeURIComponent(modelId)}${isCustom ? '?forget=1' : ''}`, {
               method: 'DELETE'
           });
           if (res.ok) {
               setLocalModels(prev => prev.filter(id => id !== modelId));
+              if (isCustom) {
+                const refreshed = await backendRequest('/api/models');
+                setLibraryModels(refreshed.data);
+              }
           } else {
               alert("Failed to delete model cache.");
           }
@@ -1064,8 +1158,8 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
         return;
     }
 
-    if (selectedModel.task === 'image_upscale' && !attachedImage) {
-      alert('Please attach an image to upscale.');
+    if ((selectedModel.task === 'image_upscale' || selectedModel.task === 'video_upscale') && !attachedImage) {
+      alert(`Please attach ${selectedModel.task === 'video_upscale' ? 'a video' : 'an image'} to upscale.`);
       return;
     }
 
@@ -1084,7 +1178,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
     
       const { width: finalWidth, height: finalHeight } = plannedSize;
 
-      const userMessage = { role: "user", content: prompt, baseImage: attachedImage || undefined };
+      const userMessage = { role: "user", content: taskMode === 'upscale' ? '' : prompt, baseImage: attachedImage || undefined, baseKind: attachedImage ? attachedKind : undefined };
     setMessages(prev => [...prev, userMessage]);
     setPrompt("");
     setAttachedImage(null);
@@ -1183,21 +1277,21 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       )}
 
       {/* Header */}
-        <header className="flex items-center justify-between pl-6 py-4 border-b border-[#343434] select-none z-50 relative bg-[#181818]"
+        <header className="flex items-center justify-between h-[49px] pl-4 border-b border-[#343434] select-none z-50 relative bg-[#181818]"
                 style={{
                   WebkitAppRegion: 'drag',
                   // main.ts uses titleBarStyle 'hidden' with a titleBarOverlay, so
                   // Windows paints minimise/maximise/close ON TOP of the top-right
-                  // of the page. Anything the header puts there is unreachable and
-                  // half-hidden - which is exactly what happened to the sign-out
-                  // button. Chromium exposes the strip it reserved as
+                  // of the page. The overlay is the same height as this header
+                  // (48px, see main.ts), so everything here sits level with those
+                  // buttons. Chromium exposes the strip it reserved as
                   // env(titlebar-area-*); the fallback is the default Windows
                   // control width, for the case where those are unavailable.
                   paddingRight:
                     'calc(100vw - env(titlebar-area-width, calc(100vw - 138px))' +
-                    ' - env(titlebar-area-x, 0px) + 12px)',
+                    ' - env(titlebar-area-x, 0px) + 8px)',
                 } as any}>
-          <div className="flex items-center gap-4 text-gray-400" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <div className="flex items-center gap-5 text-gray-400" style={{ WebkitAppRegion: 'no-drag' } as any}>
             <span title="Toggle Chat History" className="inline-flex">
               <History
                  className={`w-5 h-5 cursor-pointer transition-colors ${showSidebar ? 'text-white' : 'hover:text-white'}`}
@@ -1211,17 +1305,14 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               />
             </span>
             {currentView === 'chat' && !selectedModel.task.includes("upscale") && (
-              <>
-                <Settings
-                  className={`w-5 h-5 cursor-pointer transition-colors ${showSettings ? 'text-white' : 'hover:text-white'}`}
-                  onClick={() => setShowSettings(!showSettings)}
-                />
-                <span title="New Chat" className="inline-flex"><PenBox className="w-5 h-5 cursor-pointer hover:text-white transition-colors" onClick={createNewChat} /></span>
-              </>
+              <Settings
+                className={`w-5 h-5 cursor-pointer transition-colors ${showSettings ? 'text-white' : 'hover:text-white'}`}
+                onClick={() => setShowSettings(!showSettings)}
+              />
             )}
-            {currentView === 'chat' && selectedModel.task.includes("upscale") && (
-                <span title="New Chat" className="inline-flex"><PenBox className="w-5 h-5 cursor-pointer hover:text-white transition-colors" onClick={createNewChat} /></span>
-            )}
+            {/* Always available: createNewChat also switches back to the chat view,
+                so it doubles as the way out of the library. */}
+            <span title="New Chat" className="inline-flex"><PenBox className="w-5 h-5 cursor-pointer hover:text-white transition-colors" onClick={createNewChat} /></span>
           </div>
           {/* Account menu.
               Always rendered, signed in or not, and always carrying the same
@@ -1229,7 +1320,10 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               when a session was mandatory - now that sign-in is optional it
               would have hidden Settings and Support Vison from most users, since
               most will never sign in. */}
-          <div className="relative" ref={accountMenuRef}
+          {/* Not "relative": the dropdown anchors to the header instead, so it
+              lines up with the window's right edge rather than hanging off
+              the button, which sits left of the window controls. */}
+          <div ref={accountMenuRef} className="flex items-center gap-3"
                style={{ WebkitAppRegion: 'no-drag' } as any}>
             <button
               type="button"
@@ -1237,16 +1331,16 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               aria-haspopup="menu"
               aria-expanded={showAccountMenu}
               title={authUser ? authUser.email : 'Account'}
-              className={`flex items-center gap-2 rounded-full py-1 pl-1 pr-2 text-xs transition-colors ${
-                showAccountMenu ? 'bg-[#2c2c2c] text-white' : 'text-gray-400 hover:bg-[#2c2c2c] hover:text-white'}`}
+              className={`flex items-center gap-2 rounded-full border border-[#3a3a3a] py-1 pl-1 pr-3 text-xs transition-colors ${
+                showAccountMenu ? 'bg-[#2c2c2c] text-white' : 'text-gray-300 hover:bg-[#2c2c2c] hover:text-white'}`}
             >
-              {authUser?.picture ? (
-                <img src={authUser.picture} alt="" className="h-7 w-7 rounded-full object-cover"
-                     onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+              {authUser?.picture && !pictureFailed ? (
+                <img src={authUser.picture} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover"
+                     onError={() => setPictureFailed(true)} />
               ) : (
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#3a3a3a] text-[11px] font-medium text-gray-200">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[12px] font-semibold text-white">
                   {authUser
-                    ? (authUser.name || authUser.email || '?').trim().charAt(0).toUpperCase()
+                    ? ((authUser.name || authUser.email || '?').trim().charAt(0).toUpperCase() || '?')
                     : <User className="h-3.5 w-3.5" />}
                 </span>
               )}
@@ -1258,7 +1352,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
 
             {showAccountMenu && (
               <div role="menu"
-                   className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
+                   className="absolute right-3 top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
                 <div className="border-b border-[#343434] px-3 py-2.5">
                   {authUser ? (
                     <>
@@ -1417,11 +1511,85 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       </div>
 
       {/* Main Area */}
-      <main className={`flex-1 overflow-y-auto w-full max-w-4xl mx-auto flex flex-col pt-8 transition-all duration-300 ${showSidebar ? 'ml-64' : ''}`}>
+      <main className={`flex-1 overflow-y-auto w-full ${currentView === 'library' ? 'max-w-[1600px]' : 'max-w-4xl'} mx-auto flex flex-col pt-8 transition-all duration-300 ${showSidebar ? 'ml-64' : ''}`}>
         
+
+        {hfOpen && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={closeHfDialog}>
+              <div className="w-full max-w-lg bg-[#242424] border border-[#343434] rounded-2xl p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+                 <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-lg">Add from Hugging Face</h3>
+                    <button type="button" className="text-gray-500 hover:text-white" onClick={closeHfDialog}><X className="w-4 h-4" /></button>
+                 </div>
+                 <p className="text-sm text-gray-400">
+                    Paste a link to a model repository or a single .gguf / .safetensors file. Vison matches it to a
+                    supported model family and reuses that family&apos;s text encoder and VAE.
+                 </p>
+                 <div className="flex gap-2">
+                    <input
+                       className="flex-1 bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#5a5a5a]"
+                       placeholder="https://huggingface.co/org/model"
+                       value={hfUrl}
+                       onChange={(e) => { setHfUrl(e.target.value); setHfResolved(null); setHfError(null); }}
+                       onKeyDown={(e) => { if (e.key === 'Enter' && hfUrl.trim() && !hfBusy) handleHfResolve(); }}
+                       autoFocus
+                    />
+                    <button
+                       type="button"
+                       disabled={hfBusy || !hfUrl.trim()}
+                       className="px-3 py-2 rounded-lg text-sm font-medium bg-[#303030] hover:bg-white hover:text-black disabled:opacity-40 disabled:hover:bg-[#303030] disabled:hover:text-gray-200 transition-colors"
+                       onClick={handleHfResolve}
+                    >
+                       {hfBusy && !hfResolved ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Look up'}
+                    </button>
+                 </div>
+                 {hfError && <p className="text-sm text-red-400">{hfError}</p>}
+                 {hfResolved && (
+                    <>
+                       <div className="flex flex-col gap-1 max-h-56 overflow-y-auto border border-[#343434] rounded-lg p-1">
+                          {hfResolved.files.map((f: any) => (
+                             <label key={f.path} className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-pointer ${hfFile === f.path ? 'bg-[#303030]' : 'hover:bg-[#2c2c2c]'}`}>
+                                <input
+                                   type="radio"
+                                   name="hf-file"
+                                   checked={hfFile === f.path}
+                                   onChange={() => { setHfFile(f.path); if (f.family) setHfFamily(f.family); }}
+                                />
+                                <span className="flex-1 break-all">{f.path}</span>
+                                <span className="text-xs text-gray-500 whitespace-nowrap">{f.size ? formatBytes(f.size) : ''}</span>
+                             </label>
+                          ))}
+                       </div>
+                       <label className="flex flex-col gap-1 text-sm">
+                          <span className="text-gray-400">Model family</span>
+                          <select
+                             className="bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-sm outline-none"
+                             value={hfFamily}
+                             onChange={(e) => setHfFamily(e.target.value)}
+                          >
+                             <option value="">Choose a family…</option>
+                             {hfResolved.families.map((fam: any) => (
+                                <option key={fam.id} value={fam.id}>{fam.name} ({fam.task})</option>
+                             ))}
+                          </select>
+                          {!hfFamily && <span className="text-xs text-yellow-500">Could not tell which family this is. Pick the one it was built for; a wrong choice will fail to load.</span>}
+                       </label>
+                       <button
+                          type="button"
+                          disabled={hfBusy || !hfFile || !hfFamily}
+                          className="w-full py-2 rounded-lg text-sm font-medium bg-white text-black disabled:opacity-40 transition-colors"
+                          onClick={handleHfAdd}
+                       >
+                          {hfBusy ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Add to library'}
+                       </button>
+                    </>
+                 )}
+              </div>
+           </div>
+        )}
         {/* Library View */}
         {currentView === 'library' ? (
-           <div className="px-6 pb-20">
+           <div className="px-8 pb-20">
               <div className="flex gap-4 mb-8">
                  {['image', 'image_upscale', 'video', 'video_upscale'].map((tab) => (
                     <button 
@@ -1432,11 +1600,22 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                        {tab.includes('image') && <ImageIcon className="w-4 h-4"/>}
                        {tab.includes('video') && <Video className="w-4 h-4"/>}
                        {tab.includes('upscale') && <Maximize className="w-4 h-4"/>}
-                       {tab.replace('_', ' ')}
+                       {{ image: 'Image Generation', video: 'Video Generation' }[tab] ?? tab.replace('_', ' ')}
                     </button>
                  ))}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(activeTab === 'image' || activeTab === 'video') && (
+                 <div className="mb-4 flex justify-end">
+                    <button
+                       type="button"
+                       className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#303030] hover:bg-white hover:text-black text-gray-200 transition-colors"
+                       onClick={() => setHfOpen(true)}
+                    >
+                       <Plus className="w-3.5 h-3.5" /> Add from Hugging Face
+                    </button>
+                 </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                  {(libraryModels as any)[activeTab]?.map((model: any) => {
                     const total = modelBytes(model);
                     const onDisk = presentBytes[model.id] || 0;
@@ -1511,6 +1690,15 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                                 </button>
                              </div>
                           )}
+                          {model.custom && !have && !busy && (
+                             <button
+                                type="button"
+                                className="self-start text-xs text-gray-500 hover:text-red-400 transition-colors flex items-center gap-1"
+                                onClick={(e) => handleModelDelete(e, model.id)}
+                             >
+                                <Trash2 className="w-3.5 h-3.5" /> Remove from list
+                             </button>
+                          )}
 
                           <button
                              className={`w-full py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -1567,7 +1755,9 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               <div key={idx} className={`w-full flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`p-4 rounded-3xl max-w-xl ${msg.role === 'user' ? 'bg-[#303030] text-white' : 'bg-transparent text-gray-200'}`}>
                   {msg.baseImage && (
-                     <img src={msg.baseImage} alt="Base" className="w-32 h-32 object-cover rounded-xl mb-3 opacity-80 border border-gray-600" />
+                     msg.baseKind === 'video'
+                       ? <video src={msg.baseImage} muted className="w-32 h-32 object-cover rounded-xl mb-3 opacity-80 border border-gray-600" />
+                       : <img src={msg.baseImage} alt="Base" className="w-32 h-32 object-cover rounded-xl mb-3 opacity-80 border border-gray-600" />
                   )}
                   {msg.content && <p>{msg.content}</p>}
                   {msg.url && (
@@ -1624,7 +1814,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
         <div className="w-full absolute bottom-8 left-1/2 -translate-x-1/2 max-w-3xl px-4 flex flex-col gap-2">
           
           {/* Attachment Preview Bubble */}
-          {attachedImage && (
+          {attachedImage && taskMode !== 'upscale' && (
              <div className="self-start relative group ml-2 mt-[-40px] z-10 transition-all">
                 <img src={attachedImage} className="w-20 h-20 object-cover rounded-xl border-2 border-[#343434] shadow-2xl" />
                 <button 
@@ -1690,34 +1880,76 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
             onSubmit={handleSubmit}
             className="relative flex flex-col bg-[#242424] rounded-3xl border border-[#343434] focus-within:border-[#4f4f4f] transition-all pt-2 pb-2 pl-4 pr-2 shadow-2xl"
           >
-            <textarea
-              ref={textareaRef}
-              className="w-full bg-transparent border-none text-white focus:outline-none placeholder-gray-500 resize-none overflow-y-auto mb-2 text-sm leading-relaxed"
-              style={{ minHeight: '44px', maxHeight: '160px' }}
-              rows={1}
-              placeholder="Send a message"
-              value={prompt}
-              onChange={handleInput}
-              onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+            {taskMode === 'upscale' ? (
+              <div className="mb-2">
+                {attachedImage ? (
+                  <div className="relative inline-block">
+                    {attachedKind === 'video'
+                      ? <video src={attachedImage} controls muted className="max-h-60 max-w-full rounded-xl border border-[#343434]" />
+                      : <img src={attachedImage} alt="To upscale" className="max-h-60 max-w-full rounded-xl border border-[#343434]" />}
+                    <button
+                      type="button"
+                      onClick={() => setAttachedImage(null)}
+                      className="absolute -top-2 -right-2 bg-gray-800 rounded-full p-1 border border-gray-600 hover:bg-red-500 hover:text-white"
+                      title="Remove"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
                       e.preventDefault();
-                      handleSubmit();
-                  }
-              }}
-            />
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && fileInputRef.current) {
+                        const dt = new DataTransfer();
+                        dt.items.add(file);
+                        fileInputRef.current.files = dt.files;
+                        fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+                      }
+                    }}
+                    className="w-full h-28 flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[#4a4a4a] text-sm text-gray-400 hover:text-white hover:border-[#6a6a6a] transition-colors"
+                  >
+                    {mediaType === 'video' ? <Video className="w-5 h-5" /> : <ImageIcon className="w-5 h-5" />}
+                    {mediaType === 'video' ? 'Choose a video to upscale' : 'Choose an image to upscale'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                className="w-full bg-transparent border-none text-white focus:outline-none placeholder-gray-500 resize-none overflow-y-auto mb-2 text-sm leading-relaxed"
+                style={{ minHeight: '44px', maxHeight: '160px' }}
+                rows={1}
+                placeholder="Send a message"
+                value={prompt}
+                onChange={handleInput}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit();
+                    }
+                }}
+              />
+            )}
             
             <div className="flex items-center justify-between mt-1">
               <div className="flex items-center gap-2">
-                <input type="file" hidden accept="image/*" ref={fileInputRef} onChange={handleFileChange} />
+                <input type="file" hidden accept={taskMode === 'upscale' && mediaType === 'video' ? 'video/*' : 'image/*'} ref={fileInputRef} onChange={handleFileChange} />
                 
-                <button 
-                  type="button" 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white bg-[#303030]/50 hover:bg-[#404040] rounded-full transition-colors"
-                  title="Attach Base Image"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
+                {taskMode !== 'upscale' && (
+                  <button 
+                    type="button" 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white bg-[#303030]/50 hover:bg-[#404040] rounded-full transition-colors"
+                    title="Attach Base Image"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                )}
               </div>
 
               <div className="flex items-center gap-2 relative">
@@ -1820,17 +2052,6 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                        </div>
                     )}
 
-                    {/* Quick Setting Adjustments */}
-                     <div className="flex gap-2">
-                         <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
-                            <span className="text-gray-400 text-xs w-16">Steps</span>
-                            <input type="number" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.steps} onChange={e => setSettings({...settings, steps: Number(e.target.value)})} />
-                         </div>
-                         <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
-                            <span className="text-gray-400 text-xs w-16">Guidance</span>
-                            <input type="number" step="0.5" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.guidance} onChange={e => setSettings({...settings, guidance: Number(e.target.value)})} />
-                         </div>
-                     </div>
 
                         {/* Duration, not frame count: nobody thinks in frames.
                             The derived count is still shown, because generation
@@ -1894,23 +2115,10 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                           </div>
                         )}
 
-                        {/* Output format applies to every task, so it is not an
-                            advanced capability - it is always shown. */}
-                        <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
-                          <span className="text-gray-400 text-xs w-20">Format</span>
-                          <select
-                            className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                            value={settings.outputFormat}
-                            onChange={e => setSettings({...settings, outputFormat: e.target.value})}
-                          >
-                            <option value="png">PNG</option>
-                            <option value="jpg">JPG</option>
-                          </select>
-                        </div>
 
                         {/* Advanced: driven entirely by what the selected model
                             declares it supports, so no control here is inert. */}
-                        {advancedCaps.length > 0 && (
+                        {(
                           <div className="rounded-[12px] border border-[#343434] bg-[#181818] p-3 space-y-3">
                             <button
                               type="button"
@@ -1923,9 +2131,62 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
 
                             {showAdvanced && (
                               <div className="space-y-2">
-                                <p className="text-xs text-gray-500">
-                                  Only the settings {selectedModel.name} actually supports are listed.
-                                </p>
+                        {/* Quick Setting Adjustments */}
+                         <div className="flex gap-2">
+                             <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
+                                <span className="text-gray-400 text-xs w-16">Steps</span>
+                                <input type="number" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.steps} onChange={e => setSettings({...settings, steps: Number(e.target.value)})} />
+                             </div>
+                             <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
+                                <span className="text-gray-400 text-xs w-16">Guidance</span>
+                                <input type="number" step="0.5" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.guidance} onChange={e => setSettings({...settings, guidance: Number(e.target.value)})} />
+                             </div>
+                         </div>
+
+                            {/* Output format applies to every task, so it is not an
+                                advanced capability - it is always shown. */}
+                            <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                              <span className="text-gray-400 text-xs w-20">Format</span>
+                              <select
+                                className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                value={settings.outputFormat}
+                                onChange={e => setSettings({...settings, outputFormat: e.target.value})}
+                              >
+                                <option value="png">PNG</option>
+                                <option value="jpg">JPG</option>
+                              </select>
+                            </div>
+
+                            {/* Diagnostics is about network reachability, not the
+                                task - it used to be hidden unless you were upscaling. */}
+                            <div className="space-y-3 rounded-[12px] border border-[#343434] bg-[#181818] p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <h4 className="text-sm font-semibold text-white">Diagnostics</h4>
+                                  <p className="text-xs text-gray-500">Checks whether Hugging Face endpoints are reachable from this machine.</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={runConnectivityDiagnostics}
+                                  disabled={diagnosticLoading}
+                                  className="inline-flex items-center gap-2 rounded-lg bg-[#2f2f2f] px-3 py-2 text-xs font-medium text-white hover:bg-[#3a3a3a] disabled:opacity-50"
+                                >
+                                  <Wifi className={`w-4 h-4 ${diagnosticLoading ? 'animate-pulse' : ''}`} />
+                                  {diagnosticLoading ? 'Checking...' : 'Check Network'}
+                                </button>
+                              </div>
+                              {diagnosticResult && (
+                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[11px] leading-4 text-gray-300 border border-[#2f2f2f]">
+                                  {diagnosticResult}
+                                </pre>
+                              )}
+                            </div>
+
+                                {advancedCaps.length > 0 && (
+                                  <p className="text-xs text-gray-500">
+                                    Model options: only the settings {selectedModel.name} actually supports are listed.
+                                  </p>
+                                )}
 
                                 {(supportsAdvanced('tile_size') || supportsAdvanced('gpu_id')) && (
                                   <div className="grid grid-cols-2 gap-2">
@@ -2030,30 +2291,6 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                           </div>
                         )}
 
-                        {/* Diagnostics is about network reachability, not the
-                            task - it used to be hidden unless you were upscaling. */}
-                        <div className="space-y-3 rounded-[12px] border border-[#343434] bg-[#181818] p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <h4 className="text-sm font-semibold text-white">Diagnostics</h4>
-                              <p className="text-xs text-gray-500">Checks whether Hugging Face endpoints are reachable from this machine.</p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={runConnectivityDiagnostics}
-                              disabled={diagnosticLoading}
-                              className="inline-flex items-center gap-2 rounded-lg bg-[#2f2f2f] px-3 py-2 text-xs font-medium text-white hover:bg-[#3a3a3a] disabled:opacity-50"
-                            >
-                              <Wifi className={`w-4 h-4 ${diagnosticLoading ? 'animate-pulse' : ''}`} />
-                              {diagnosticLoading ? 'Checking...' : 'Check Network'}
-                            </button>
-                          </div>
-                          {diagnosticResult && (
-                            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[11px] leading-4 text-gray-300 border border-[#2f2f2f]">
-                              {diagnosticResult}
-                            </pre>
-                          )}
-                        </div>
 
                     {/* Model Dropdown */}
                     <div className="flex flex-col gap-2">
@@ -2136,6 +2373,15 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                            <div className="px-4 py-4 text-sm text-gray-500 text-center font-medium">No models found for this category</div>
                          )}
                        </div>
+                       {taskMode === 'generate' && (
+                         <button
+                           type="button"
+                           className="flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-[12px] border border-dashed border-[#4a4a4a] text-gray-400 hover:text-white hover:border-[#6a6a6a] transition-colors"
+                           onClick={() => { setShowModelDropdown(false); setHfOpen(true); }}
+                         >
+                           <Plus className="w-3.5 h-3.5" /> Add model from Hugging Face link
+                         </button>
+                       )}
                     </div>
                   </div>
                 )}

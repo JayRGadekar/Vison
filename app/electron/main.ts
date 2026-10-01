@@ -13,6 +13,20 @@ import { ALLOWED_EXTERNAL_URLS } from '../src/support-links';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// The 'close' handler below hides to the tray instead of quitting, and
+// nothing here ever stopped a second process from launching on top of it.
+// A second instance mints its own random API_TOKEN (below) and can never
+// authenticate against the first instance's already-running backend - the
+// reachability check gets a 401, concludes no backend is up, and tries to
+// spawn a second one on the same port, which can't bind. The new window then
+// polls a backend that will never accept its token: permanently "Backend
+// Offline" until the user finds and kills the hidden first instance. Refuse
+// the second instance outright instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 let mainWindow: BrowserWindow | null;
 let backendProcess: ChildProcess | null = null;
 let tray: Tray | null = null;
@@ -428,7 +442,8 @@ function createWindow() {
     titleBarStyle: 'hidden', // Give it a native clean look
     titleBarOverlay: {
       color: '#181818',
-      symbolColor: '#ffffff'
+      symbolColor: '#ffffff',
+      height: 48
     },
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
@@ -529,5 +544,15 @@ app.on('window-all-closed', () => {});
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+  }
+});
+
+// Fires in the first (surviving) instance when a second launch was refused
+// by the lock above - surface the existing window instead of doing nothing.
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
   }
 });

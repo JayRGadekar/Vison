@@ -339,6 +339,50 @@ ProbeResult probe_endpoint(const std::string& url) {
     return finish();
 }
 
+bool http_get_string(const std::string& url, std::string& body, int& status, std::string& error) {
+    body.clear();
+    status = 0;
+    ParsedUrl u = parse_url(url);
+    if (!u.ok) { error = "Malformed URL"; return false; }
+
+    WinHttpHandle session(open_session());
+    if (!session) { error = last_error_message("WinHttpOpen"); return false; }
+    WinHttpHandle connect(WinHttpConnect(session, u.host.c_str(), u.port, 0));
+    if (!connect) { error = last_error_message("WinHttpConnect"); return false; }
+
+    DWORD flags = u.https ? WINHTTP_FLAG_SECURE : 0;
+    WinHttpHandle request(WinHttpOpenRequest(connect, L"GET", u.path.c_str(),
+                                             nullptr, WINHTTP_NO_REFERER,
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
+    if (!request) { error = last_error_message("WinHttpOpenRequest"); return false; }
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+        error = last_error_message("WinHttpSendRequest");
+        return false;
+    }
+    if (!WinHttpReceiveResponse(request, nullptr)) {
+        error = last_error_message("WinHttpReceiveResponse");
+        return false;
+    }
+    status = (int)status_code_of(request);
+
+    // An API listing is small; the cap only stops a wrong URL (a model file)
+    // from being pulled into memory.
+    constexpr size_t kMaxBody = 16u * 1024 * 1024;
+    char buf[16384];
+    DWORD read = 0;
+    while (WinHttpReadData(request, buf, sizeof(buf), &read) && read > 0) {
+        body.append(buf, read);
+        if (body.size() > kMaxBody) { error = "Response too large"; return false; }
+    }
+    if (status < 200 || status >= 300) {
+        error = "HTTP " + std::to_string(status);
+        return false;
+    }
+    return true;
+}
+
 // --- Integrity verification -------------------------------------------------
 
 bool has_gguf_magic(const std::string& path) {

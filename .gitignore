@@ -24,6 +24,8 @@ app/release/
 .env
 *.env
 *.env.*
+# ...except the checked-in template showing which vars to set (see docs/OAUTH-SETUP.md)
+!app/.env.example
 
 # Logs and crash/debug outputs
 *.log

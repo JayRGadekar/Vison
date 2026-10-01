@@ -55,6 +55,25 @@ if(VISON_VULKAN)
     set(SD_VULKAN ON CACHE BOOL "" FORCE)
     set(GGML_VULKAN ON CACHE BOOL "" FORCE)
     set(VISP_VULKAN ON CACHE BOOL "" FORCE)
+
+    # Load the Vulkan backend as a plugin at runtime (core/src/device.cpp's
+    # ggml_backend_load_all(), gated behind std::once_flag) instead of linking
+    # ggml-vulkan.dll statically. Without this, ggml-vulkan.dll is a load-time
+    # dependency of vison_server.exe: Windows resolves it, and everything the
+    # DLL does at load - including probing the GPU driver, which routinely
+    # spins up its own worker threads for shader compilation - runs under the
+    # loader lock before main() executes. A driver thread touching the CRT
+    # while the loader lock is held is undefined behaviour, and reproduced
+    # here as an instant null-deref access violation inside msvcp140.dll on
+    # every launch, regardless of which GPU or Vulkan ICD was in use. Deferring
+    # the load to ggml_backend_load_all() moves that work off the loader lock
+    # entirely.
+    set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
+    # ggml's CPU backend build refuses GGML_NATIVE (auto-detected AVX512/etc.
+    # tuned for this exact machine) together with GGML_BACKEND_DL, since a
+    # DL-loaded backend has to work regardless of which CPU loads it. Build
+    # every ISA variant instead and let ggml pick the best one at runtime.
+    set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
 endif()
 
 if(VISON_CUDA)

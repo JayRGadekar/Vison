@@ -5,6 +5,7 @@ add_library(vison_core STATIC
     src/device.cpp
     src/queue.cpp
     src/download.cpp
+    src/hf_link.cpp
 )
 
 target_include_directories(vison_core PUBLIC include)
@@ -25,3 +26,9 @@ endif()
 if(VISON_VULKAN)
     target_compile_definitions(vison_core PUBLIC VISON_VULKAN)
 endif()
+
+# Pure-logic tests (no network, no GPU). Run: ctest -C Release -R hf_link
+add_executable(hf_link_test tests/hf_link_test.cpp)
+target_link_libraries(hf_link_test PRIVATE vison_core)
+enable_testing()
+add_test(NAME hf_link COMMAND hf_link_test)

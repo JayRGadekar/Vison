@@ -47,6 +47,11 @@ bool has_safetensors_header(const std::string& path);
 // human-readable reason on failure.
 bool verify_model_file(const std::string& path, uint64_t expected_size, std::string& error);
 
+// GETs a small text resource (an API response) into `body`, following
+// redirects. Returns true only for a 2xx status; `status` is filled in either
+// way so callers can tell a 404 from a network failure (status 0).
+bool http_get_string(const std::string& url, std::string& body, int& status, std::string& error);
+
 // --- Connectivity diagnostics ----------------------------------------------
 
 struct ProbeResult {

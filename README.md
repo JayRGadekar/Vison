@@ -16,7 +16,9 @@ a model, it downloads once, and everything after that runs on your GPU.
 
 - **Text to image**, four model tiers from a 4 GB card upward
 - **Text to video**, likewise
-- **Upscaling** for both, via Real-ESRGAN
+- **Upscaling** for both, via ESRGAN — a photographic model and an
+  illustration model, so a render and a drawing each get the right one
+- **Add your own models** from a Hugging Face link (repo or single file) when they belong to a supported family
 - **Image to image**, by attaching a starting image
 - Chat-style history of everything you have made, searchable by prompt
 
@@ -52,6 +54,13 @@ sh scripts/bootstrap-third-party.sh
 cmake -S . -B build -A x64 -DCMAKE_BUILD_TYPE=Release -DVISON_VULKAN=ON
 cmake --build build --config Release --target vison_server --parallel
 
+# Optional, but without it your installer ships with no video muxer, and
+# most people who install it won't have ffmpeg on PATH either - video
+# generation will silently fall back to numbered PNG frames. This fetches
+# the same licence-clean (LGPL) ffmpeg build the CI release pipeline bundles.
+# See docs/BUILD.md#ffmpeg.
+sh scripts/fetch-ffmpeg.sh
+
 cd app && npm ci && npm run build
 ```
 
@@ -63,24 +72,45 @@ compute shaders and only ships in the SDK.
 Everything is pulled from Hugging Face on demand. The registry lives in
 `server/src/server.cpp`.
 
-| Task | Model | Size | Min VRAM |
+**Size** is every file the model needs, not just the transformer — a model is
+useless without its text encoders and VAE, so that is what the app downloads and
+what it reports. Several models share files (the Wan models share one umt5
+encoder; Qwen-Image and HunyuanVideo share one Qwen2.5-VL; Z-Image and FLUX
+share one VAE), so the second one you download costs less than its row suggests.
+
+| Task | Model | Size | Advisory VRAM |
 |---|---|---|---|
 | Image | SDXL Turbo | 3.8 GB | 4 GB |
 | Image | Z-Image Turbo | 7.5 GB | 4 GB |
-| Image | FLUX.1 Schnell | ~16 GB | 6 GB |
-| Image | Qwen-Image | large | high |
-| Video | Wan 2.1 T2V 1.3B | ~3 GB | 4 GB |
-| Video | Wan 2.2 TI2V 5B | ~5 GB | 6 GB |
-| Video | Wan 2.2 T2V A14B | very large | high |
-| Video | HunyuanVideo 1.5 | very large | high |
-| Upscale | Real-ESRGAN x4 | 9 MB | low |
+| Image | FLUX.1 Schnell | 11.4 GB | 8 GB |
+| Image | Qwen-Image | 16.8 GB | 8 GB |
+| Video | Wan 2.1 T2V 1.3B | 6.7 GB | 6 GB |
+| Video | Wan 2.2 TI2V 5B | 8.7 GB | 6 GB |
+| Video | Wan 2.2 T2V A14B | 22.1 GB | 16 GB |
+| Video | HunyuanVideo 1.5 | 22.6 GB | 16 GB |
+| Video | MiniMax H3 (video + audio) | 33.0 GB | 24 GB |
+| Upscale | ESRGAN 4x Remacri (photographic) | 32 MB | low |
+| Upscale | Real-ESRGAN x4 Anime 6B | 9 MB | low |
+
+The VRAM column is advisory only. What the app actually does is measure your
+RAM and your card and tell you, per model, whether it fits, is tight, or will
+not finish — see `check_compatibility` in `core/src/device.cpp`.
+
+**Two upscalers, and which one you want:** Remacri is the default and the right
+choice for anything meant to look real — it keeps skin, hair, foliage and grain.
+The Anime 6B model is trained to flatten exactly that texture in favour of clean
+line work, which is what you want on drawn or animated output and not what you
+want on a photoreal render.
 
 **Being straight about coverage:** SDXL Turbo, Z-Image Turbo, FLUX.1 Schnell,
-the two smaller Wan video models and Real-ESRGAN have all been run here and
-produce output. Qwen-Image, Wan 2.2 A14B and HunyuanVideo 1.5 are registered
-and wired up but have **never been run** — they do not fit on the development
-machine. If you have the hardware, that is the single most useful thing you
-could report back.
+the two smaller Wan video models and the Anime 6B upscaler have all been run
+here and produce output. Qwen-Image, Wan 2.2 A14B, HunyuanVideo 1.5 and
+MiniMax H3 are registered and wired up but have **never been run** — they do not
+fit on the development machine. The Remacri upscaler has not been run here
+either; it is the same ESRGAN architecture and loader as the Anime 6B model that
+has, and its weights come from the author of the vision.cpp we use to run them,
+but that is an argument rather than a test. If you have the hardware, running
+any of these is the single most useful thing you could report back.
 
 ## Privacy
 

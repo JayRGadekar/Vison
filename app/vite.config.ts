@@ -1,9 +1,9 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron/simple'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
   // Bake the OAuth client ID and secret into the build.
   //
   // auth.ts reads process.env at runtime, which is fine in development but
@@ -18,36 +18,47 @@ export default defineConfig({
   // clients, so it has to ship inside the installer, where anyone can read it
   // out of the asar. PKCE is what actually secures this flow. See
   // getClientSecret() in electron/auth.ts.
-  define: {
-    __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_ID || ''),
-    __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_SECRET || ''),
-  },
-  plugins: [
-    react(),
-    electron({
-      main: {
-        entry: 'electron/main.ts',
-        // vite-plugin-electron runs a separate build for the main process with
-        // its own config, so the top-level define above does not reach it.
-        vite: {
-          define: {
-            __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_ID || ''),
-            __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.VISON_GOOGLE_CLIENT_SECRET || ''),
+  //
+  // A real environment variable still wins over this - loadEnv only fills in
+  // what an actual env var didn't already supply, so CI (which sets real env
+  // vars from repo secrets) behaves identically to a local .env.local. See
+  // app/.env.example.
+  const fileEnv = loadEnv(mode, process.cwd(), 'VISON_')
+  const clientId = process.env.VISON_GOOGLE_CLIENT_ID || fileEnv.VISON_GOOGLE_CLIENT_ID || ''
+  const clientSecret = process.env.VISON_GOOGLE_CLIENT_SECRET || fileEnv.VISON_GOOGLE_CLIENT_SECRET || ''
+
+  return {
+    define: {
+      __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(clientId),
+      __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(clientSecret),
+    },
+    plugins: [
+      react(),
+      electron({
+        main: {
+          entry: 'electron/main.ts',
+          // vite-plugin-electron runs a separate build for the main process with
+          // its own config, so the top-level define above does not reach it.
+          vite: {
+            define: {
+              __VISON_GOOGLE_CLIENT_ID__: JSON.stringify(clientId),
+              __VISON_GOOGLE_CLIENT_SECRET__: JSON.stringify(clientSecret),
+            },
           },
         },
-      },
-      preload: {
-        input: 'electron/preload.ts',
-        vite: {
-          build: {
-            rollupOptions: {
-              output: {
-                format: 'cjs',
+        preload: {
+          input: 'electron/preload.ts',
+          vite: {
+            build: {
+              rollupOptions: {
+                output: {
+                  format: 'cjs',
+                },
               },
             },
           },
         },
-      },
-    }),
-  ],
+      }),
+    ],
+  }
 })

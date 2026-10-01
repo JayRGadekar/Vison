@@ -1,9 +1,10 @@
 // Refuses to package a bundled ffmpeg whose licence we cannot ship under.
 //
-// Vison is distributed as a paid, closed-source product. It shells out to
-// ffmpeg as a separate process, which keeps Vison's own source out of scope -
-// but the ffmpeg binary we bundle carries its own licence, and that licence is
-// decided at ITS build time, not by which encoders we happen to call.
+// Vison is MIT-licensed and free, but that does not extend to whatever we
+// bundle alongside it. It shells out to ffmpeg as a separate process, which
+// keeps Vison's own source out of scope - but the ffmpeg binary we bundle
+// carries its own licence, and that licence is decided at ITS build time, not
+// by which encoders we happen to call.
 //
 // This is the trap worth automating away: a typical Windows ffmpeg build ships
 // with --enable-gpl --enable-version3 --enable-libx264, which makes the binary

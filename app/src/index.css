@@ -9,4 +9,9 @@ html, body {
   height: 100%;
   background-color: #000;
   color: #fff;
+  /* Without this, Chromium renders native form-control popups (a <select>'s
+     option list, in particular) in the OS light theme regardless of the
+     page's own dark styling - the closed control looks themed, the dropdown
+     list is a plain white box. */
+  color-scheme: dark;
 }

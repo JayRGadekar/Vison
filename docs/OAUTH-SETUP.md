@@ -111,6 +111,14 @@ New terminals pick those up; existing ones do not. `auth.ts` prefers the runtime
 value over the baked one, so this also fixes `npm run dev`, which rebuilds
 `main.js` on every launch and would otherwise wipe a baked-in value.
 
+**Or use a `.env.local` file instead of a system environment variable.** Copy
+`app/.env.example` to `app/.env.local`, fill in both values, and `vite.config.ts`
+picks them up automatically via Vite's `loadEnv` - no extra dependency, and
+`.env.local` is already gitignored so there's no risk of committing it. A real
+environment variable still takes priority if both are set, so this is purely a
+local convenience; it has no effect on CI, which supplies the values as actual
+repository secrets (step 8).
+
 If instead the build stops with *"Refusing to package: no Google OAuth client
 ID and client secret baked into main.js"*, the environment variables were not
 set in the shell that ran the build. `$env:` assignments only last for that

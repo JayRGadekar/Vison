@@ -162,10 +162,23 @@ libvpx, no GPL components. It ships to `resources/backend/` beside the server,
 where step 2 of the search order finds it — verified, it beats a system install
 at `C:/ffmpeg`.
 
-To replace it, drop a different `ffmpeg.exe` into `build/bin/` and rebuild. The
-licence gate checks it and the notices regenerate against the new binary,
-including its source-commit link. Do *not* ship an `--enable-nonfree` build;
-those cannot be redistributed at all.
+The CI release pipeline stages this automatically (see `.github/workflows/build.yml`,
+"Stage the LGPL ffmpeg"). Building locally does not go through CI, so
+`build/bin/ffmpeg.exe` won't exist unless you fetch it yourself:
+
+```sh
+sh scripts/fetch-ffmpeg.sh
+```
+
+It downloads the exact same BtbN asset CI uses, so a local `npm run build`
+produces an installer identical to a release build on this front. Safe to
+re-run - it leaves an existing `build/bin/ffmpeg.exe` alone unless you pass
+`--force`.
+
+To replace it with a different build, drop a different `ffmpeg.exe` into
+`build/bin/` and rebuild. The licence gate checks it and the notices
+regenerate against the new binary, including its source-commit link. Do *not*
+ship an `--enable-nonfree` build; those cannot be redistributed at all.
 
 Obligations for an LGPL build: include ffmpeg's licence text, and make its source
 available (a link to the exact release you built from is normally accepted).

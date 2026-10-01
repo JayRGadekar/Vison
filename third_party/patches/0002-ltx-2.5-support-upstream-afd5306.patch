@@ -1,0 +1,645 @@
+diff --git a/README.md b/README.md
+index a80ae5f..6ba81d8 100644
+--- a/README.md
++++ b/README.md
+@@ -15,6 +15,7 @@ API and command-line option may change frequently.***
+ 
+ ## 🔥Important News
+ 
++* **2026/08/20** 🚀 stable-diffusion.cpp now supports **LTX-2.5**
+ * **2026/08/04** 🚀 stable-diffusion.cpp adds **Day-1 support for MiniMax-H3**
+ * **2026/06/25** 🚀 stable-diffusion.cpp now supports **Krea2**
+ * **2026/06/04** 🚀 stable-diffusion.cpp now supports **Ideogram4**
+@@ -68,7 +69,7 @@ API and command-line option may change frequently.***
+   - Video Models
+     - [Wan2.1/Wan2.2](./docs/wan.md)
+     - [MiniMax-H3](./docs/minimax_h3.md)
+-    - [LTX-2.3](./docs/ltx2.md)
++    - [LTX-2.3/LTX-2.5](./docs/ltx2.md)
+     - [HunyuanVideo 1.5](./docs/hunyuan_video.md)
+     - [LingBot-Video](./docs/lingbot_video.md)
+   - [PhotoMaker](./docs/photo_maker.md) support.
+diff --git a/docs/ltx2.md b/docs/ltx2.md
+index 703c9cb..9caa974 100644
+--- a/docs/ltx2.md
++++ b/docs/ltx2.md
+@@ -1,7 +1,17 @@
+ # How to Use
+ 
++Both LTX-2.3 and LTX-2.5 are supported. The two share a transformer, video VAE and audio
++VAE architecture; LTX-2.5 drops the video FFN biases, adds a learned keyframe
++absolute-position embedding, and pairs with a Gemma 4 text encoder instead of Gemma 3.
++Everything is detected from the weights, so the command lines differ only in which files
++you pass.
++
++# LTX-2.3
++
+ ## Download weights
+ 
++### LTX-2.3
++
+ - Download LTX-2.3
+     - safetensors: https://huggingface.co/Kijai/LTX2.3_comfy/tree/main/diffusion_models
+     - gguf: https://huggingface.co/unsloth/LTX-2.3-GGUF/tree/main
+@@ -16,6 +26,30 @@
+ - Download LTX spatial latent upscaler
+     - safetensors: https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+ 
++### LTX-2.5
++
++- Download LTX-2.5
++    - safetensors: https://huggingface.co/Lightricks/LTX-2.5/tree/main/diffusion_models
++    - gguf: https://huggingface.co/vantagewithai/LTX-2.5-GGUF/tree/main
++- Download the text encoder. This is a Gemma 4 12B fine-tuned for LTX with the text
++  projection bundled in, so no separate `--embeddings-connectors` file is needed. Google's
++  stock Gemma 4 is not a substitute.
++    - safetensors: https://huggingface.co/Lightricks/LTX-2.5/blob/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
++- Download the video vae. Use the **conv** variant: `ltx-2.5-video-vae-conv-bf16.safetensors`.
++  The default `ltx-2.5-video-vae-bf16.safetensors` is a diffusion decoder, which is not
++  implemented here.
++    - safetensors: https://huggingface.co/Lightricks/LTX-2.5/blob/main/vae/ltx-2.5-video-vae-conv-bf16.safetensors
++- Download the audio vae
++    - safetensors: https://huggingface.co/Lightricks/LTX-2.5/blob/main/vae/ltx-2.5-audio-vae-bf16.safetensors
++- Download the LTX spatial latent upscaler
++    - safetensors: https://huggingface.co/Lightricks/LTX-2.5/blob/main/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
++
++To run the text encoder quantized, convert it once with sd-cli:
++
++```
++.\bin\Release\sd-cli.exe -M convert -m ..\models\text_encoders\gemma4-12b-with-proj-ltx-2.5-bf16.safetensors --type q8_0 -o ..\models\text_encoders\gemma4-12b-with-proj-ltx-2.5-Q8_0.gguf
++```
++
+ ## Examples
+ 
+ ### LTX-2.3 dev T2V
+@@ -74,4 +108,32 @@ By default, the hires refine pass uses the main sampler and scheduler, then trim
+   src="../assets/ltx2/hires_i2v.webm"
+   controls
+   muted
+-  style="max-width: 100%; height: auto;"></video>
+\ No newline at end of file
++  style="max-width: 100%; height: auto;"></video>
++
++### LTX-2.5 dev T2V
++
++```
++.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model ..\models\diffusion_models\ltx-2.5-22b-dev-transformer-Q8_0.gguf --vae ..\models\vae\ltx-2.5-video-vae-conv-bf16.safetensors --audio-vae ..\models\vae\ltx-2.5-audio-vae-bf16.safetensors --llm ..\models\text_encoders\gemma4-12b-with-proj-ltx-2.5-Q8_0.gguf -p "A wide aerial shot of a red vintage convertible driving along a coastal cliff road at sunset, waves crashing below" --cfg-scale 3.0 --sampling-method euler -v -n "worst quality, low quality, blurry, distorted, artifacts" -W 1280 -H 720 --diffusion-fa --offload-to-cpu --video-frames 121 --fps 24 -o t2v.webm
++```
++
++### LTX-2.5 dev I2V
++
++```
++.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model ..\models\diffusion_models\ltx-2.5-22b-dev-transformer-Q8_0.gguf --vae ..\models\vae\ltx-2.5-video-vae-conv-bf16.safetensors --audio-vae ..\models\vae\ltx-2.5-audio-vae-bf16.safetensors --llm ..\models\text_encoders\gemma4-12b-with-proj-ltx-2.5-Q8_0.gguf -p "a lovely cat blinking slowly, gentle camera push in" --cfg-scale 3.0 --sampling-method euler -v -W 1280 -H 720 --diffusion-fa --offload-to-cpu --video-frames 121 -i ..\assets\ernie_image\turbo_example.png -o i2v.webm
++```
++
++### LTX-2.5 spatial latent upscale
++
++Works exactly like the LTX-2.3 upscaler described below; put
++`ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors` under `--hires-upscalers-dir` and
++pass its name without path or extension to `--hires-upscaler`.
++
++```
++.\bin\Release\sd-cli.exe -M vid_gen --diffusion-model ..\models\diffusion_models\ltx-2.5-22b-dev-transformer-Q8_0.gguf --vae ..\models\vae\ltx-2.5-video-vae-conv-bf16.safetensors --audio-vae ..\models\vae\ltx-2.5-audio-vae-bf16.safetensors --llm ..\models\text_encoders\gemma4-12b-with-proj-ltx-2.5-Q8_0.gguf --hires-upscalers-dir ..\models\latent_upscale_models --hires-upscaler ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0 --hires --hires-steps 6 -p "a lovely cat" --cfg-scale 3.0 --sampling-method euler -v -W 640 -H 360 --diffusion-fa --offload-to-cpu --video-frames 121 -o hires_t2v.webm
++```
++
++## Not implemented
++
++- The diffusion video decoder (`ltx-2.5-video-vae-bf16.safetensors`). Use the conv VAE.
++- The temporal latent upscaler and the duration head (`--auto-duration`); pass
++  `--video-frames` explicitly.
+\ No newline at end of file
+diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
+index 3d7ff03..8968676 100644
+--- a/src/conditioning/conditioner.hpp
++++ b/src/conditioning/conditioner.hpp
+@@ -2978,15 +2978,36 @@ struct LTXAVEmbedder : public Conditioner {
+     std::shared_ptr<GemmaTokenizer> tokenizer;
+     std::shared_ptr<LLM::LLMRunner> llm;
+     std::shared_ptr<LTXAVTextProjectionRunner> projector;
++    std::string projector_prefix;
+     bool dual_projection = false;
+ 
++    // Gemma 4 keeps a per-layer output scalar that no Gemma 3 checkpoint has, and widens its
++    // full-attention heads to 512 so their q_proj is twice a sliding layer's.
++    static LLM::LLMArch detect_gemma_arch(const String2TensorStorage& tensor_storage_map,
++                                          const std::string& llm_prefix) {
++        if (tensor_storage_map.find(llm_prefix + ".model.layers.0.layer_scalar") != tensor_storage_map.end()) {
++            return LLM::LLMArch::GEMMA4_12B;
++        }
++        auto global_q  = tensor_storage_map.find(llm_prefix + ".model.layers.5.self_attn.q_proj.weight");
++        auto sliding_q = tensor_storage_map.find(llm_prefix + ".model.layers.0.self_attn.q_proj.weight");
++        if (global_q != tensor_storage_map.end() &&
++            sliding_q != tensor_storage_map.end() &&
++            global_q->second.ne[1] == sliding_q->second.ne[1] * 2) {
++            return LLM::LLMArch::GEMMA4_12B;
++        }
++        return LLM::LLMArch::GEMMA3_12B;
++    }
++
+     LTXAVEmbedder(ggml_backend_t backend,
+                   const String2TensorStorage& tensor_storage_map      = {},
+                   const std::string& llm_prefix                       = "text_encoders.llm",
+                   const std::string& projector_prefix                 = "text_embedding_projection",
+-                  std::shared_ptr<RunnerWeightManager> weight_manager = nullptr) {
++                  std::shared_ptr<RunnerWeightManager> weight_manager = nullptr)
++        : projector_prefix(projector_prefix) {
++        LLM::LLMArch arch = detect_gemma_arch(tensor_storage_map, llm_prefix);
++        LOG_INFO("ltxav text encoder: %s", arch == LLM::LLMArch::GEMMA4_12B ? "gemma 4" : "gemma 3");
+         tokenizer       = std::make_shared<GemmaTokenizer>();
+-        llm             = std::make_shared<LLM::LLMRunner>(LLM::LLMArch::GEMMA3_12B,
++        llm             = std::make_shared<LLM::LLMRunner>(arch,
+                                                backend,
+                                                tensor_storage_map,
+                                                llm_prefix,
+@@ -3001,7 +3022,7 @@ struct LTXAVEmbedder : public Conditioner {
+ 
+     void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors) override {
+         llm->get_param_tensors(tensors, "text_encoders.llm");
+-        projector->get_param_tensors(tensors, "text_embedding_projection");
++        projector->get_param_tensors(tensors, projector_prefix);
+     }
+ 
+     void get_param_tensor_ops(std::map<ggml_tensor*, enum ggml_op>& tensor_ops) override {
+diff --git a/src/model/common/block.hpp b/src/model/common/block.hpp
+index be76dd7..6eb387d 100644
+--- a/src/model/common/block.hpp
++++ b/src/model/common/block.hpp
+@@ -268,10 +268,11 @@ public:
+                 int64_t dim_out,
+                 int64_t mult          = 4,
+                 Activation activation = Activation::GEGLU,
+-                bool precision_fix    = false) {
++                bool precision_fix    = false,
++                bool bias             = true) {
+         int64_t inner_dim = dim * mult;
+         if (activation == Activation::GELU) {
+-            blocks["net.0"] = std::shared_ptr<GGMLBlock>(new GELU(dim, inner_dim));
++            blocks["net.0"] = std::shared_ptr<GGMLBlock>(new GELU(dim, inner_dim, bias));
+         } else {
+             blocks["net.0"] = std::shared_ptr<GGMLBlock>(new GEGLU(dim, inner_dim));
+         }
+@@ -285,7 +286,7 @@ public:
+         // The purpose of the scale here is to prevent NaN issues in certain situations.
+         // For example, when using Vulkan without enabling force_prec_f32,
+         // or when using CUDA but the weights are k-quants.
+-        blocks["net.2"] = std::shared_ptr<GGMLBlock>(new Linear(inner_dim, dim_out, true, false, force_prec_f32, scale));
++        blocks["net.2"] = std::shared_ptr<GGMLBlock>(new Linear(inner_dim, dim_out, bias, false, force_prec_f32, scale));
+     }
+ 
+     ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+diff --git a/src/model/diffusion/ltxv.hpp b/src/model/diffusion/ltxv.hpp
+index 39c6337..b75c9f7 100644
+--- a/src/model/diffusion/ltxv.hpp
++++ b/src/model/diffusion/ltxv.hpp
+@@ -129,6 +129,10 @@ namespace LTXV {
+         bool self_attention_gated  = false;
+         bool cross_attention_gated = false;
+ 
++        bool ff_bias                         = true;
++        bool audio_ff_bias                   = true;
++        bool use_keyframes_abs_pos_embedding = false;
++
+         static std::pair<int64_t, int64_t> infer_attention_layout(int64_t hidden_size,
+                                                                   int64_t preferred_heads = -1) {
+             if (preferred_heads > 0 && hidden_size % preferred_heads == 0) {
+@@ -207,6 +211,19 @@ namespace LTXV {
+                 tensor_storage_map.find(prefix + ".transformer_blocks.0.audio_attn2.to_gate_logits.weight") != tensor_storage_map.end()) {
+                 config.cross_attention_gated = true;
+             }
++            // LTX 2.5 sets ff_bias=false but leaves audio_ff_bias at its default, so the two
++            // branches must be detected separately; older checkpoints ship both sets of biases.
++            if (tensor_storage_map.find(prefix + ".transformer_blocks.0.ff.net.0.proj.bias") == tensor_storage_map.end() &&
++                tensor_storage_map.find(prefix + ".transformer_blocks.0.ff.net.2.bias") == tensor_storage_map.end()) {
++                config.ff_bias = false;
++            }
++            if (tensor_storage_map.find(prefix + ".transformer_blocks.0.audio_ff.net.0.proj.bias") == tensor_storage_map.end() &&
++                tensor_storage_map.find(prefix + ".transformer_blocks.0.audio_ff.net.2.bias") == tensor_storage_map.end()) {
++                config.audio_ff_bias = false;
++            }
++            if (tensor_storage_map.find(prefix + ".keyframes_abs_pos_embedding") != tensor_storage_map.end()) {
++                config.use_keyframes_abs_pos_embedding = true;
++            }
+             if (tensor_storage_map.find(prefix + ".caption_projection.linear_1.weight") == tensor_storage_map.end() &&
+                 tensor_storage_map.find(prefix + ".caption_projection.linear_2.weight") == tensor_storage_map.end()) {
+                 config.use_caption_projection = false;
+@@ -874,8 +891,7 @@ namespace LTXV {
+                          const String2TensorStorage& tensor_storage_map = {},
+                          const std::string prefix                       = "") override {
+             if (num_learnable_registers > 0) {
+-                ggml_type wtype               = get_type(prefix + "learnable_registers", tensor_storage_map, GGML_TYPE_F32);
+-                params["learnable_registers"] = ggml_new_tensor_2d(ctx, wtype, hidden_size, num_learnable_registers);
++                params["learnable_registers"] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, hidden_size, num_learnable_registers);
+             }
+         }
+ 
+@@ -1130,7 +1146,9 @@ namespace LTXV {
+                                 int64_t a_context_dim,
+                                 bool apply_gated_attention,
+                                 bool cross_attention_adaln,
+-                                bool video_rope_interleaved)
++                                bool video_rope_interleaved,
++                                bool ff_bias       = true,
++                                bool audio_ff_bias = true)
+             : v_dim(v_dim),
+               a_dim(a_dim),
+               cross_attention_adaln(cross_attention_adaln) {
+@@ -1140,8 +1158,8 @@ namespace LTXV {
+             blocks["audio_attn2"]         = std::make_shared<CrossAttention>(a_dim, a_context_dim, a_heads, ad_head, apply_gated_attention, false);
+             blocks["audio_to_video_attn"] = std::make_shared<CrossAttention>(v_dim, a_dim, a_heads, ad_head, apply_gated_attention, false);
+             blocks["video_to_audio_attn"] = std::make_shared<CrossAttention>(a_dim, v_dim, a_heads, ad_head, apply_gated_attention, false);
+-            blocks["ff"]                  = std::make_shared<FeedForward>(v_dim, v_dim, 4, FeedForward::Activation::GELU);
+-            blocks["audio_ff"]            = std::make_shared<FeedForward>(a_dim, a_dim, 4, FeedForward::Activation::GELU);
++            blocks["ff"]                  = std::make_shared<FeedForward>(v_dim, v_dim, 4, FeedForward::Activation::GELU, false, ff_bias);
++            blocks["audio_ff"]            = std::make_shared<FeedForward>(a_dim, a_dim, 4, FeedForward::Activation::GELU, false, audio_ff_bias);
+         }
+ 
+         std::vector<ggml_tensor*> get_ada_values(GGMLRunnerContext* ctx,
+@@ -1320,6 +1338,12 @@ namespace LTXV {
+                                                                    get_type(prefix + "audio_scale_shift_table", tensor_storage_map, GGML_TYPE_F32),
+                                                                    config.audio_hidden_size,
+                                                                    2);
++            if (config.use_keyframes_abs_pos_embedding) {
++                params["keyframes_abs_pos_embedding"] = ggml_new_tensor_2d(ctx,
++                                                                           get_type(prefix + "keyframes_abs_pos_embedding", tensor_storage_map, GGML_TYPE_F32),
++                                                                           config.hidden_size,
++                                                                           1);
++            }
+         }
+ 
+         LTXAVModelBlock(const LTXAVConfig& config)
+@@ -1386,7 +1410,9 @@ namespace LTXV {
+                                                                                                               config.audio_cross_attention_dim,
+                                                                                                               config.self_attention_gated || config.cross_attention_gated,
+                                                                                                               config.cross_attention_adaln,
+-                                                                                                              config.video_rope_interleaved);
++                                                                                                              config.video_rope_interleaved,
++                                                                                                              config.ff_bias,
++                                                                                                              config.audio_ff_bias);
+             }
+ 
+             blocks["norm_out"]       = std::make_shared<LayerNorm>(config.hidden_size, 1e-6f, false);
+@@ -1534,6 +1560,38 @@ namespace LTXV {
+             return {v_context, a_context};
+         }
+ 
++        // The video encoder is causal, so the first latent frame covers a single pixel frame while
++        // every later one covers temporal_scale_factor. LTX 2.5 marks that token class with a
++        // learned embedding added right after patchify_proj.
++        ggml_tensor* apply_keyframes_abs_pos_embedding(GGMLRunnerContext* ctx,
++                                                       ggml_tensor* vx,
++                                                       int64_t tokens_per_latent_frame) {
++            if (!config.use_keyframes_abs_pos_embedding || params.count("keyframes_abs_pos_embedding") == 0) {
++                return vx;
++            }
++            int64_t tokens = vx->ne[1];
++            if (tokens_per_latent_frame <= 0 || tokens_per_latent_frame > tokens) {
++                return vx;
++            }
++            auto embedding = params["keyframes_abs_pos_embedding"];
++            auto first     = ggml_cont(ctx->ggml_ctx,
++                                       ggml_view_3d(ctx->ggml_ctx, vx, vx->ne[0], tokens_per_latent_frame, vx->ne[2], vx->nb[1], vx->nb[2], 0));
++            first          = ggml_add(ctx->ggml_ctx, first, embedding);
++            if (tokens_per_latent_frame == tokens) {
++                return first;
++            }
++            auto rest = ggml_cont(ctx->ggml_ctx,
++                                  ggml_view_3d(ctx->ggml_ctx,
++                                               vx,
++                                               vx->ne[0],
++                                               tokens - tokens_per_latent_frame,
++                                               vx->ne[2],
++                                               vx->nb[1],
++                                               vx->nb[2],
++                                               tokens_per_latent_frame * vx->nb[1]));
++            return ggml_concat(ctx->ggml_ctx, first, rest, 1);
++        }
++
+         std::vector<ggml_tensor*> get_output_scale_shift(GGMLRunnerContext* ctx,
+                                                          ggml_tensor* table,
+                                                          ggml_tensor* embedded_timestep,
+@@ -1575,6 +1633,7 @@ namespace LTXV {
+ 
+             vx = patchify_video(ctx, vx, n);
+             vx = patchify_proj->forward(ctx, vx);
++            vx = apply_keyframes_abs_pos_embedding(ctx, vx, width * height);
+             if (ax != nullptr && ggml_nelements(ax) > 0 && audio_time > 0) {
+                 ax = patchify_audio(ctx, ax);
+                 ax = audio_patchify_proj->forward(ctx, ax);
+diff --git a/src/model/te/llm.hpp b/src/model/te/llm.hpp
+index 0abecdb..f1a057d 100644
+--- a/src/model/te/llm.hpp
++++ b/src/model/te/llm.hpp
+@@ -40,6 +40,7 @@ namespace LLM {
+         MINISTRAL_3_3B,
+         GEMMA3_12B,
+         GEMMA2_2B,
++        GEMMA4_12B,
+         GPT_OSS_20B,
+         ARCH_COUNT,
+     };
+@@ -52,6 +53,7 @@ namespace LLM {
+         "ministral3.3b",
+         "gemma3_12b",
+         "gemma2_2b",
++        "gemma4_12b",
+         "gpt_oss_20b",
+     };
+ 
+@@ -120,6 +122,15 @@ namespace LLM {
+         bool have_vision_weight = false;
+         bool llama_cpp_style    = false;
+ 
++        // gemma4 config
++        int global_head_dim         = 0;
++        int num_global_kv_heads     = 0;
++        float global_partial_rotary = 1.f;
++        bool global_k_eq_v          = false;
++        bool v_norm                 = false;
++        bool layer_scalar           = false;
++        bool unscaled_attention     = false;
++
+         static LLMConfig detect_from_weights(const String2TensorStorage& tensor_storage_map,
+                                              const std::string& prefix,
+                                              LLMArch arch) {
+@@ -157,6 +168,27 @@ namespace LLM {
+                 config.rope_thetas             = {1000000.f, 10000.f};
+                 config.rope_scales             = {8.f, 1.f};
+                 config.sliding_attention       = {1024, 1024, 1024, 1024, 1024, 0};
++            } else if (arch == LLMArch::GEMMA4_12B) {
++                config.head_dim                = 256;
++                config.num_heads               = 16;
++                config.num_kv_heads            = 8;
++                config.global_head_dim         = 512;
++                config.num_global_kv_heads     = 1;
++                config.global_partial_rotary   = 0.25f;
++                config.global_k_eq_v           = true;
++                config.v_norm                  = true;
++                config.layer_scalar            = true;
++                config.unscaled_attention      = true;
++                config.qkv_bias                = false;
++                config.qk_norm                 = true;
++                config.rms_norm_eps            = 1e-6f;
++                config.rms_norm_add            = false;
++                config.normalize_input         = true;
++                config.max_position_embeddings = 262144;
++                config.mlp_activation          = MLPActivation::GELU_TANH;
++                config.rope_thetas             = {1000000.f, 10000.f};
++                config.rope_scales             = {1.f, 1.f};
++                config.sliding_attention       = {1024, 1024, 1024, 1024, 1024, 0};
+             } else if (arch == LLMArch::GEMMA2_2B) {
+                 config.head_dim                = 256;
+                 config.num_heads               = 8;
+@@ -1063,6 +1095,11 @@ namespace LLM {
+         std::vector<float> rope_thetas;
+         std::vector<float> rope_scales;
+         bool has_attention_sinks;
++        bool k_eq_v;
++        bool v_norm;
++        bool unscaled_attention;
++        float rms_norm_eps;
++        int rope_pairs;
+ 
+         void init_params(ggml_context* ctx,
+                          const String2TensorStorage& tensor_storage_map = {},
+@@ -1073,24 +1110,48 @@ namespace LLM {
+         }
+ 
+     public:
+-        Attention(const LLMConfig& config)
++        Attention(const LLMConfig& config, bool global_layer = false)
+             : arch(config.arch),
+               num_heads(config.num_heads),
+-              num_kv_heads(config.num_kv_heads),
+-              head_dim(config.head_dim),
++              num_kv_heads(global_layer && config.num_global_kv_heads > 0 ? config.num_global_kv_heads : config.num_kv_heads),
++              head_dim(global_layer && config.global_head_dim > 0 ? config.global_head_dim : config.head_dim),
+               qk_norm(config.qk_norm),
+               max_position_embeddings(config.max_position_embeddings),
+               rope_thetas(config.rope_thetas),
+               rope_scales(config.rope_scales),
+-              has_attention_sinks(config.arch == LLMArch::GPT_OSS_20B) {
++              has_attention_sinks(config.arch == LLMArch::GPT_OSS_20B),
++              k_eq_v(global_layer && config.global_k_eq_v),
++              v_norm(config.v_norm),
++              unscaled_attention(config.unscaled_attention),
++              rms_norm_eps(config.rms_norm_eps),
++              rope_pairs(0) {
+             blocks["q_proj"] = std::make_shared<Linear>(config.hidden_size, num_heads * head_dim, config.qkv_bias);
+             blocks["k_proj"] = std::make_shared<Linear>(config.hidden_size, num_kv_heads * head_dim, config.qkv_bias);
+-            blocks["v_proj"] = std::make_shared<Linear>(config.hidden_size, num_kv_heads * head_dim, config.qkv_bias);
++            if (!k_eq_v) {
++                blocks["v_proj"] = std::make_shared<Linear>(config.hidden_size, num_kv_heads * head_dim, config.qkv_bias);
++            }
+             blocks["o_proj"] = std::make_shared<Linear>(num_heads * head_dim, config.hidden_size, config.attention_out_bias);
+             if (config.qk_norm) {
+                 blocks["q_norm"] = std::make_shared<LLMRMSNorm>(head_dim, config.rms_norm_eps, config.rms_norm_add);
+                 blocks["k_norm"] = std::make_shared<LLMRMSNorm>(head_dim, config.rms_norm_eps, config.rms_norm_add);
+             }
++            // Proportional RoPE rotates only the leading `rope_pairs` dimension pairs of the head;
++            // the rest are left unrotated through freq_factors (see rope_freq_factors()).
++            float partial = global_layer ? config.global_partial_rotary : 1.f;
++            rope_pairs    = static_cast<int>(partial * head_dim / 2.f);
++        }
++
++        // ggml applies theta_i / freq_factors[i], so a huge factor collapses the angle to zero and
++        // leaves that pair unrotated. This reproduces transformers' "proportional" RoPE, whose
++        // inv_freq is zero-padded past `rope_pairs`, without reordering the head.
++        ggml_tensor* rope_freq_factors(ggml_context* ctx) const {
++            int pairs = head_dim / 2;
++            if (rope_pairs >= pairs) {
++                return nullptr;
++            }
++            auto rotated   = ggml_ext_ones(ctx, rope_pairs, 1, 1, 1);
++            auto unrotated = ggml_ext_full(ctx, 1e30f, pairs - rope_pairs, 1, 1, 1);
++            return ggml_concat(ctx, rotated, unrotated, 0);
+         }
+ 
+         ggml_tensor* forward(GGMLRunnerContext* ctx,
+@@ -1103,12 +1164,12 @@ namespace LLM {
+             int64_t N       = x->ne[2];
+             auto q_proj     = std::dynamic_pointer_cast<Linear>(blocks["q_proj"]);
+             auto k_proj     = std::dynamic_pointer_cast<Linear>(blocks["k_proj"]);
+-            auto v_proj     = std::dynamic_pointer_cast<Linear>(blocks["v_proj"]);
++            auto v_proj     = k_eq_v ? nullptr : std::dynamic_pointer_cast<Linear>(blocks["v_proj"]);
+             auto out_proj   = std::dynamic_pointer_cast<Linear>(blocks["o_proj"]);
+ 
+-            auto q = q_proj->forward(ctx, x);  // [N, n_token, num_heads*head_dim]
+-            auto k = k_proj->forward(ctx, x);  // [N, n_token, num_kv_heads*head_dim]
+-            auto v = v_proj->forward(ctx, x);  // [N, n_token, num_kv_heads*head_dim]
++            auto q = q_proj->forward(ctx, x);               // [N, n_token, num_heads*head_dim]
++            auto k = k_proj->forward(ctx, x);               // [N, n_token, num_kv_heads*head_dim]
++            auto v = k_eq_v ? k : v_proj->forward(ctx, x);  // [N, n_token, num_kv_heads*head_dim]
+ 
+             q = ggml_reshape_4d(ctx->ggml_ctx, q, head_dim, num_heads, n_token, N);     // [N, n_token, num_heads, head_dim]
+             k = ggml_reshape_4d(ctx->ggml_ctx, k, head_dim, num_kv_heads, n_token, N);  // [N, n_token, num_kv_heads, head_dim]
+@@ -1121,6 +1182,10 @@ namespace LLM {
+                 q = q_norm->forward(ctx, q);
+                 k = k_norm->forward(ctx, k);
+             }
++            if (v_norm) {
++                // Gemma 4 normalizes V with a weightless RMS norm, and never rotates it.
++                v = ggml_rms_norm(ctx->ggml_ctx, v, rms_norm_eps);
++            }
+ 
+             if (arch == LLMArch::MISTRAL_SMALL_3_2) {
+                 q = ggml_rope_ext(ctx->ggml_ctx, q, input_pos, nullptr, 128, GGML_ROPE_TYPE_NORMAL, 8192, 1000000000.f, 1.f, 0.f, 1.f, 32.f, 1.f);
+@@ -1191,6 +1256,35 @@ namespace LLM {
+                                                  1.f,
+                                                  32.f,
+                                                  1.f);
++            } else if (arch == LLMArch::GEMMA4_12B) {
++                float rope_theta  = (rope_index == 1 ? 10000.0f : 1000000.0f);
++                auto freq_factors = rope_freq_factors(ctx->ggml_ctx);
++                q                 = ggml_rope_ext(ctx->ggml_ctx,
++                                                  q,
++                                                  input_pos,
++                                                  freq_factors,
++                                                  head_dim,
++                                                  GGML_ROPE_TYPE_NEOX,
++                                                  static_cast<int>(max_position_embeddings),
++                                                  rope_theta,
++                                                  1.f,
++                                                  0.f,
++                                                  1.f,
++                                                  32.f,
++                                                  1.f);
++                k                 = ggml_rope_ext(ctx->ggml_ctx,
++                                                  k,
++                                                  input_pos,
++                                                  freq_factors,
++                                                  head_dim,
++                                                  GGML_ROPE_TYPE_NEOX,
++                                                  static_cast<int>(max_position_embeddings),
++                                                  rope_theta,
++                                                  1.f,
++                                                  0.f,
++                                                  1.f,
++                                                  32.f,
++                                                  1.f);
+             } else if (arch == LLMArch::GEMMA2_2B) {
+                 q = ggml_rope_ext(ctx->ggml_ctx,
+                                   q,
+@@ -1228,6 +1322,11 @@ namespace LLM {
+                 k               = ggml_rope_multi(ctx->ggml_ctx, k, input_pos, nullptr, head_dim, sections, GGML_ROPE_TYPE_MROPE, 128000, 1000000.f, 1.f, 0.f, 1.f, 32.f, 1.f);
+             }
+ 
++            if (unscaled_attention) {
++                // Gemma 4 attends with scaling=1.0; undo the helper's own 1/sqrt(head_dim).
++                q = ggml_ext_scale(ctx->ggml_ctx, q, std::sqrt(static_cast<float>(head_dim)));
++            }
++
+             q = ggml_cont(ctx->ggml_ctx, ggml_ext_torch_permute(ctx->ggml_ctx, q, 0, 2, 1, 3));  // [N, num_heads, n_token, head_dim]
+             q = ggml_reshape_3d(ctx->ggml_ctx, q, q->ne[0], q->ne[1], q->ne[2] * q->ne[3]);      // [N*num_heads, n_token, head_dim]
+ 
+@@ -1266,15 +1365,30 @@ namespace LLM {
+     protected:
+         LLMArch arch;
+         int sliding_attention;
++        bool has_layer_scalar;
+         std::string post_attention_norm_name;
+         std::string pre_ffw_norm_name;
+         std::string post_ffw_norm_name;
+ 
++        void init_params(ggml_context* ctx,
++                         const String2TensorStorage& tensor_storage_map = {},
++                         std::string prefix                             = "") override {
++            GGMLBlock::init_params(ctx, tensor_storage_map, prefix);
++            if (has_layer_scalar) {
++                params["layer_scalar"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
++            }
++        }
++
+     public:
+         TransformerBlock(const LLMConfig& config, int layer_index)
+             : arch(config.arch),
+-              sliding_attention(0) {
+-            if (config.arch == LLMArch::GEMMA3_12B) {
++              sliding_attention(0),
++              has_layer_scalar(config.layer_scalar) {
++            if (config.arch == LLMArch::GEMMA4_12B) {
++                post_attention_norm_name = "post_attention_layernorm";
++                pre_ffw_norm_name        = "pre_feedforward_layernorm";
++                post_ffw_norm_name       = "post_feedforward_layernorm";
++            } else if (config.arch == LLMArch::GEMMA3_12B || config.arch == LLMArch::GEMMA4_12B) {
+                 post_attention_norm_name = "post_attention_norm";       // attn_post_norm
+                 pre_ffw_norm_name        = "post_attention_layernorm";  // ffn_norm
+                 post_ffw_norm_name       = "post_ffw_norm";             // ffn_post_norm
+@@ -1288,7 +1402,10 @@ namespace LLM {
+                 pre_ffw_norm_name = "post_attention_layernorm";  // ffn_norm
+             }
+ 
+-            blocks["self_attn"] = std::make_shared<Attention>(config);
++            if (!config.sliding_attention.empty()) {
++                sliding_attention = config.sliding_attention[layer_index % config.sliding_attention.size()];
++            }
++            blocks["self_attn"] = std::make_shared<Attention>(config, sliding_attention == 0);
+             if (config.arch == LLMArch::GPT_OSS_20B) {
+                 blocks["mlp"] = std::make_shared<GPTOSSMLP>(config);
+             } else {
+@@ -1305,9 +1422,6 @@ namespace LLM {
+             if (!post_ffw_norm_name.empty()) {
+                 blocks[post_ffw_norm_name] = std::make_shared<LLMRMSNorm>(config.hidden_size, config.rms_norm_eps, config.rms_norm_add);
+             }
+-            if (!config.sliding_attention.empty()) {
+-                sliding_attention = config.sliding_attention[layer_index % config.sliding_attention.size()];
+-            }
+         }
+ 
+         ggml_tensor* forward(GGMLRunnerContext* ctx,
+@@ -1329,7 +1443,7 @@ namespace LLM {
+             }
+             ggml_tensor* block_attention_mask = attention_mask;
+             int rope_index                    = 0;
+-            if ((arch == LLMArch::GEMMA3_12B || arch == LLMArch::GPT_OSS_20B) && sliding_attention > 0) {
++            if ((arch == LLMArch::GEMMA3_12B || arch == LLMArch::GEMMA4_12B || arch == LLMArch::GPT_OSS_20B) && sliding_attention > 0) {
+                 block_attention_mask = sliding_attention_mask;
+                 rope_index           = 1;
+             }
+@@ -1356,6 +1470,10 @@ namespace LLM {
+             }
+             x = ggml_add_inplace(ctx->ggml_ctx, x, residual);
+ 
++            if (has_layer_scalar) {
++                x = ggml_mul(ctx->ggml_ctx, x, params["layer_scalar"]);
++            }
++
+             return x;
+         }
+     };
+@@ -1850,6 +1968,7 @@ namespace LLM {
+                 config.arch == LLMArch::MINISTRAL_3_3B ||
+                 config.arch == LLMArch::QWEN3 ||
+                 config.arch == LLMArch::GEMMA3_12B ||
++                config.arch == LLMArch::GEMMA4_12B ||
+                 config.arch == LLMArch::GEMMA2_2B ||
+                 config.arch == LLMArch::GPT_OSS_20B) {
+                 input_pos_vec.resize(n_tokens);
+@@ -1914,7 +2033,7 @@ namespace LLM {
+                 set_backend_tensor_data(attention_mask, attention_mask_vec.data());
+             }
+ 
+-            if (config.arch == LLMArch::GEMMA3_12B || config.arch == LLMArch::GPT_OSS_20B) {
++            if (config.arch == LLMArch::GEMMA3_12B || config.arch == LLMArch::GEMMA4_12B || config.arch == LLMArch::GPT_OSS_20B) {
+                 int sliding_window = 0;
+                 for (int window : config.sliding_attention) {
+                     sliding_window = std::max(sliding_window, window);
+diff --git a/src/name_conversion.cpp b/src/name_conversion.cpp
+index 1e73d42..7e528c7 100644
+--- a/src/name_conversion.cpp
++++ b/src/name_conversion.cpp
+@@ -149,6 +149,7 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix)
+         {"ffn_up.", "mlp.up_proj."},
+         {"ffn_post_norm.", "post_ffw_norm."},
+         {"ffn_norm.", "post_attention_layernorm."},
++        {"layer_output_scale.weight", "layer_scalar"},
+         {"output_norm.", "model.norm."},
+     };
+ 
+@@ -1459,6 +1460,7 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
+         {"unet.", "model.diffusion_model."},
+         {"transformer.", "model.diffusion_model."},  // dit
+         {"vae.", "first_stage_model."},
++        {"text_encoders.llm.text_embedding_projection.", "text_embedding_projection."},
+         {"text_encoder.", "cond_stage_model.transformer."},
+         {"te.", "cond_stage_model.transformer."},
+         {"text_encoder.2.", "cond_stage_model.1.transformer."},
