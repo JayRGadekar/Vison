@@ -1,9 +1,10 @@
 # Changelog
 
-Vison does not have a public release yet — this is drafted ahead of cutting
-`v0.1.0` so the GitHub Release has real notes instead of an empty tag.
+## [0.1.0] — 2026-10-01
 
-## [0.1.0] — Unreleased
+First public release (published as a pre-release). Windows installer:
+`Vison.Setup.0.1.0.exe`, attached to the
+[v0.1.0 release](https://github.com/JayRGadekar/Vison/releases/tag/v0.1.0).
 
 Initial public version.
 
@@ -13,7 +14,7 @@ Initial public version.
 - Four image model tiers (SDXL Turbo, Z-Image Turbo, FLUX.1 Schnell,
   Qwen-Image) and video via Wan 2.1/2.2 and HunyuanVideo 1.5.
 - LTX 2.5 Distilled (video + audio) registered in the model list; untested on real hardware (about 26 GB of weights).
-- "Add from Hugging Face" in the library: paste a repo or file link and Vison matches it to a supported family (FLUX, Wan, HunyuanVideo, LTX 2.5, MiniMax H3, Z-Image, Qwen-Image, SDXL), reusing that family's text encoder and VAE.
+- "Add from Hugging Face" in the library: paste a repo or file link and Vison matches it to a supported family (FLUX, Wan, HunyuanVideo, LTX 2.5, MiniMax H3, Z-Image, Qwen-Image, SDXL, and GGUF ESRGAN upscalers), reusing that family's text encoder and VAE. Upscalers must be GGUF.
 - Image-to-image generation by attaching a starting image.
 - Upscaling for both images and video via Real-ESRGAN.
 - Chat-style history of every generation, stored in SQLite with an FTS5
