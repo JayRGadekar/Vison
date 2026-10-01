@@ -247,7 +247,6 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Settings State
-  const [showSettings, setShowSettings] = useState(false);
   const [noticesText, setNoticesText] = useState<string | null>(null);
   const [showSupport, setShowSupport] = useState(false);
   const [supportError, setSupportError] = useState<string | null>(null);
@@ -270,7 +269,7 @@ function App() {
     }
   };
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [runHistory, setRunHistory] = useState<RunRecord[]>(() => loadRunHistory());
   // Real GPUs reported by the backend. `index` is exactly what gpu_id expects,
   // so the picker can offer cards by name instead of asking for a magic number.
@@ -523,9 +522,8 @@ function App() {
       setCurrentView('chat');
     };
 
-    // The settings panel lives in the chat view, so reaching it from the
-    // account menu has to bring the view along - otherwise the item does
-    // nothing at all from the library.
+    // The settings panel lives in the chat view, so reaching them from the account menu has to
+    // bring the view along - otherwise the item does nothing from the library.
     const openSettingsFromMenu = () => {
       setShowAccountMenu(false);
       setCurrentView('chat');
@@ -861,7 +859,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       if (data?.status !== 'ok') { setHfError(data?.message || 'Could not add that model.'); return; }
       const refreshed = await backendRequest('/api/models');
       setLibraryModels(refreshed.data);
-      setActiveTab(data.task === 'video' ? 'video' : 'image');
+      setActiveTab(['video', 'image_upscale'].includes(data.task) ? data.task : 'image');
       closeHfDialog();
     } catch (err) {
       setHfError(err instanceof Error ? err.message : String(err));
@@ -874,7 +872,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
       e.stopPropagation();
       if (!confirm(`Are you sure you want to delete ${modelId}?`)) return;
       try {
-        const isCustom = [...(libraryModels.image || []), ...(libraryModels.video || [])]
+        const isCustom = [...(libraryModels.image || []), ...(libraryModels.video || []), ...(libraryModels.image_upscale || []), ...(libraryModels.video_upscale || [])]
           .some((m: any) => m.id === modelId && m.custom);
         const res = await backendRequest(`/api/models/${encodeURIComponent(modelId)}${isCustom ? '?forget=1' : ''}`, {
               method: 'DELETE'
@@ -1304,11 +1302,13 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                  onClick={() => setCurrentView(currentView === 'library' ? 'chat' : 'library')}
               />
             </span>
-            {currentView === 'chat' && !selectedModel.task.includes("upscale") && (
-              <Settings
-                className={`w-5 h-5 cursor-pointer transition-colors ${showSettings ? 'text-white' : 'hover:text-white'}`}
-                onClick={() => setShowSettings(!showSettings)}
-              />
+            {currentView === 'chat' && (
+              <span title="Settings" className="inline-flex">
+                <Settings
+                  className={`w-5 h-5 cursor-pointer transition-colors ${showSettings ? 'text-white' : 'hover:text-white'}`}
+                  onClick={() => setShowSettings(!showSettings)}
+                />
+              </span>
             )}
             {/* Always available: createNewChat also switches back to the chat view,
                 so it doubles as the way out of the library. */}
@@ -1320,10 +1320,9 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
               when a session was mandatory - now that sign-in is optional it
               would have hidden Settings and Support Vison from most users, since
               most will never sign in. */}
-          {/* Not "relative": the dropdown anchors to the header instead, so it
-              lines up with the window's right edge rather than hanging off
-              the button, which sits left of the window controls. */}
-          <div ref={accountMenuRef} className="flex items-center gap-3"
+          {/* "relative" so the dropdown's right edge lines up with the button
+              it belongs to, not the window edge past the window controls. */}
+          <div ref={accountMenuRef} className="relative flex items-center gap-3"
                style={{ WebkitAppRegion: 'no-drag' } as any}>
             <button
               type="button"
@@ -1352,7 +1351,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
 
             {showAccountMenu && (
               <div role="menu"
-                   className="absolute right-3 top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
+                   className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#3a3a3a] bg-[#232323] shadow-xl shadow-black/40">
                 <div className="border-b border-[#343434] px-3 py-2.5">
                   {authUser ? (
                     <>
@@ -1604,7 +1603,7 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                     </button>
                  ))}
               </div>
-              {(activeTab === 'image' || activeTab === 'video') && (
+              {(
                  <div className="mb-4 flex justify-end">
                     <button
                        type="button"
@@ -2116,182 +2115,6 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                         )}
 
 
-                        {/* Advanced: driven entirely by what the selected model
-                            declares it supports, so no control here is inert. */}
-                        {(
-                          <div className="rounded-[12px] border border-[#343434] bg-[#181818] p-3 space-y-3">
-                            <button
-                              type="button"
-                              onClick={() => setShowAdvanced(!showAdvanced)}
-                              className="flex w-full items-center justify-between text-left"
-                            >
-                              <span className="text-sm font-semibold text-white">Advanced</span>
-                              <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
-                            </button>
-
-                            {showAdvanced && (
-                              <div className="space-y-2">
-                        {/* Quick Setting Adjustments */}
-                         <div className="flex gap-2">
-                             <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
-                                <span className="text-gray-400 text-xs w-16">Steps</span>
-                                <input type="number" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.steps} onChange={e => setSettings({...settings, steps: Number(e.target.value)})} />
-                             </div>
-                             <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center px-4">
-                                <span className="text-gray-400 text-xs w-16">Guidance</span>
-                                <input type="number" step="0.5" className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.guidance} onChange={e => setSettings({...settings, guidance: Number(e.target.value)})} />
-                             </div>
-                         </div>
-
-                            {/* Output format applies to every task, so it is not an
-                                advanced capability - it is always shown. */}
-                            <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
-                              <span className="text-gray-400 text-xs w-20">Format</span>
-                              <select
-                                className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                                value={settings.outputFormat}
-                                onChange={e => setSettings({...settings, outputFormat: e.target.value})}
-                              >
-                                <option value="png">PNG</option>
-                                <option value="jpg">JPG</option>
-                              </select>
-                            </div>
-
-                            {/* Diagnostics is about network reachability, not the
-                                task - it used to be hidden unless you were upscaling. */}
-                            <div className="space-y-3 rounded-[12px] border border-[#343434] bg-[#181818] p-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <h4 className="text-sm font-semibold text-white">Diagnostics</h4>
-                                  <p className="text-xs text-gray-500">Checks whether Hugging Face endpoints are reachable from this machine.</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={runConnectivityDiagnostics}
-                                  disabled={diagnosticLoading}
-                                  className="inline-flex items-center gap-2 rounded-lg bg-[#2f2f2f] px-3 py-2 text-xs font-medium text-white hover:bg-[#3a3a3a] disabled:opacity-50"
-                                >
-                                  <Wifi className={`w-4 h-4 ${diagnosticLoading ? 'animate-pulse' : ''}`} />
-                                  {diagnosticLoading ? 'Checking...' : 'Check Network'}
-                                </button>
-                              </div>
-                              {diagnosticResult && (
-                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[11px] leading-4 text-gray-300 border border-[#2f2f2f]">
-                                  {diagnosticResult}
-                                </pre>
-                              )}
-                            </div>
-
-                                {advancedCaps.length > 0 && (
-                                  <p className="text-xs text-gray-500">
-                                    Model options: only the settings {selectedModel.name} actually supports are listed.
-                                  </p>
-                                )}
-
-                                {(supportsAdvanced('tile_size') || supportsAdvanced('gpu_id')) && (
-                                  <div className="grid grid-cols-2 gap-2">
-                                    {supportsAdvanced('tile_size') && (
-                                      <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
-                                        <span className="text-gray-400 text-xs w-20" title="VAE decode tile edge in pixels. 0 uses the default (256px).">Tile px</span>
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          step="64"
-                                          placeholder="auto"
-                                          className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                                          value={settings.tileSize}
-                                          onChange={e => setSettings({...settings, tileSize: Number(e.target.value)})}
-                                        />
-                                      </div>
-                                    )}
-                                    {supportsAdvanced('gpu_id') && (
-                                      <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
-                                        <span className="text-gray-400 text-xs w-16" title="Which GPU to run on. Changing this reloads the model.">GPU</span>
-                                        {/* Populated from /api/system, whose `index` is the same
-                                            number the backend means by "vulkan<N>". Falls back to a
-                                            text field only if the device list could not be read. */}
-                                        {gpuDevices.length > 0 ? (
-                                          <select
-                                            className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                                            value={settings.gpuId}
-                                            onChange={e => setSettings({...settings, gpuId: e.target.value})}
-                                          >
-                                            <option value="">Auto</option>
-                                            {gpuDevices.map((d: any) => (
-                                              <option key={d.index} value={String(d.index)}>
-                                                {d.name}{d.integrated ? ' (integrated)' : ''} — {Number(d.vram_gb).toFixed(1)} GB
-                                              </option>
-                                            ))}
-                                          </select>
-                                        ) : (
-                                          <input
-                                            type="text"
-                                            className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                                            value={settings.gpuId}
-                                            onChange={e => setSettings({...settings, gpuId: e.target.value})}
-                                            placeholder="0"
-                                          />
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {supportsAdvanced('compression') && (
-                                  <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
-                                    {/* JPEG and PNG mean genuinely different things by
-                                        "compression", so label it for the chosen format
-                                        rather than pretending one scale fits both. */}
-                                    <span
-                                      className="text-gray-400 text-xs w-24"
-                                      title={settings.outputFormat === 'jpg'
-                                        ? 'JPEG quality 1-100. 0 uses the default (92).'
-                                        : 'PNG is lossless; 1-9 trades encode time against file size. 0 uses the default.'}
-                                    >
-                                      {settings.outputFormat === 'jpg' ? 'Quality' : 'PNG level'}
-                                    </span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={settings.outputFormat === 'jpg' ? 100 : 9}
-                                      placeholder="auto"
-                                      className="min-w-0 w-16 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
-                                      value={settings.compression}
-                                      onChange={e => setSettings({...settings, compression: Number(e.target.value)})}
-                                    />
-                                  </div>
-                                )}
-
-                                {(supportsAdvanced('tta_mode') || supportsAdvanced('allow_fallback')) && (
-                                  <div className="flex flex-col gap-2 bg-[#2c2c2c] p-3 rounded-[12px]">
-                                    {supportsAdvanced('tta_mode') && (
-                                      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={settings.ttaMode}
-                                          onChange={e => setSettings({...settings, ttaMode: e.target.checked})}
-                                        />
-                                        <span>TTA mode <span className="text-gray-500">— cleaner edges, ~8x slower</span></span>
-                                      </label>
-                                    )}
-                                    {supportsAdvanced('allow_fallback') && (
-                                      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={settings.allowFallback}
-                                          onChange={e => setSettings({...settings, allowFallback: e.target.checked})}
-                                        />
-                                        <span>Allow CPU fallback <span className="text-gray-500">— runs if the GPU can't, far slower</span></span>
-                                      </label>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-
                     {/* Model Dropdown */}
                     <div className="flex flex-col gap-2">
                        <div className="relative">
@@ -2373,15 +2196,13 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
                            <div className="px-4 py-4 text-sm text-gray-500 text-center font-medium">No models found for this category</div>
                          )}
                        </div>
-                       {taskMode === 'generate' && (
-                         <button
-                           type="button"
-                           className="flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-[12px] border border-dashed border-[#4a4a4a] text-gray-400 hover:text-white hover:border-[#6a6a6a] transition-colors"
-                           onClick={() => { setShowModelDropdown(false); setHfOpen(true); }}
-                         >
-                           <Plus className="w-3.5 h-3.5" /> Add model from Hugging Face link
-                         </button>
-                       )}
+                       <button
+                         type="button"
+                         className="flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-[12px] border border-dashed border-[#4a4a4a] text-gray-400 hover:text-white hover:border-[#6a6a6a] transition-colors"
+                         onClick={() => { setShowModelDropdown(false); setHfOpen(true); }}
+                       >
+                         <Plus className="w-3.5 h-3.5" /> Add {taskMode === 'upscale' ? 'upscaler' : 'model'} from Hugging Face link
+                       </button>
                     </div>
                   </div>
                 )}
@@ -2529,55 +2350,179 @@ const handleModelDownload = async (e: React.MouseEvent, modelId: string) => {
         </div>
       )}
 
-      {showSettings && currentView === 'chat' && !selectedModel.task.includes("upscale") && (
-        <div className="absolute top-16 left-6 bg-[#242424] border border-[#343434] p-5 rounded-2xl shadow-2xl z-50 w-80 text-sm">
-           {/* Setting Options remain the same, just truncated here to save space as I've fully rewritten the parent scope... Let's re-add them below so it doesn't break */}
-          <div className="flex justify-between items-center mb-4 text-white">
-             <h3 className="font-semibold text-base">Generation Settings</h3>
-             <X className="w-4 h-4 cursor-pointer hover:text-gray-300" onClick={() => setShowSettings(false)} />
+
+      {/* Settings: model options and generation settings, driven entirely by
+          what the selected model declares it supports, so no control is inert.
+          Lives top left, under the header icons, rather than inside the model picker, which it used to
+          push off the bottom of the window. */}
+      {showSettings && currentView === 'chat' && (
+        <div className="fixed left-6 top-14 z-50 w-80 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl border border-[#343434] bg-[#242424] p-4 shadow-2xl text-sm">
+          <div className="mb-3 flex items-center justify-between text-white">
+            <h3 className="text-base font-semibold">Settings</h3>
+            <X className="h-4 w-4 cursor-pointer hover:text-gray-300" onClick={() => setShowSettings(false)} />
           </div>
-          <div className="space-y-4">
-             <div>
-                <label className="block text-gray-400 mb-1">Negative Prompt</label>
-                <input type="text" className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none" value={settings.negativePrompt} onChange={e => setSettings({...settings, negativePrompt: e.target.value})} />
-             </div>
-             {selectedModel.task.includes("upscale") ? (
-                 <div>
-                   <label className="block text-gray-400 mb-1">Quality / Upscale Factor</label>
-                   <select 
-                     className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none"
-                     value={settings.upscaleQuality} 
-                     onChange={e => setSettings({...settings, upscaleQuality: e.target.value})}
-                   >
-                     <option value="2x">2x</option>
-                     <option value="4x">4x</option>
-                     <option value="1080p">1080p</option>
-                     <option value="1440p">1440p</option>
-                     <option value="2160p">2160p / 4K</option>
-                   </select>
-                 </div>
-               ) : (
-                 <div className="flex gap-3">
-                    <div className="flex-1">
-                       <label className="block text-gray-400 mb-1">Width</label>
-                       <input type="number" step="64" className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none" value={settings.width} onChange={e => setSettings({...settings, width: Number(e.target.value)})} />
-                    </div>
-                    <div className="flex-1">
-                       <label className="block text-gray-400 mb-1">Height</label>
-                       <input type="number" step="64" className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none" value={settings.height} onChange={e => setSettings({...settings, height: Number(e.target.value)})} />
-                    </div>
-                 </div>
-               )}
-             <div className="flex gap-3">
-                <div className="flex-1">
-                   <label className="block text-gray-400 mb-1">Steps</label>
-                   <input type="number" className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none" value={settings.steps} onChange={e => setSettings({...settings, steps: Number(e.target.value)})} />
-                </div>
-                <div className="flex-1">
-                   <label className="block text-gray-400 mb-1">Guidance</label>
-                   <input type="number" step="0.5" className="w-full bg-[#181818] border border-[#343434] rounded-lg px-3 py-2 text-white outline-none" value={settings.guidance} onChange={e => setSettings({...settings, guidance: Number(e.target.value)})} />
-                </div>
-             </div>
+          <div className="space-y-2">
+                        {!selectedModel.task.includes('upscale') && (
+                          <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                            <span className="text-gray-400 text-xs w-28 shrink-0">Negative prompt</span>
+                            <input type="text" className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.negativePrompt} onChange={e => setSettings({...settings, negativePrompt: e.target.value})} />
+                          </div>
+                        )}
+                        {/* Quick Setting Adjustments */}
+                         <div className="flex gap-2">
+                             <div className="flex min-w-0 bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center gap-2 px-3">
+                                <span className="text-gray-400 text-xs shrink-0">Steps</span>
+                                <input type="number" className="min-w-0 w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.steps} onChange={e => setSettings({...settings, steps: Number(e.target.value)})} />
+                             </div>
+                             <div className="flex min-w-0 bg-[#2c2c2c] p-1.5 rounded-[12px] flex-1 items-center gap-2 px-3">
+                                <span className="text-gray-400 text-xs shrink-0">Guidance</span>
+                                <input type="number" step="0.5" className="min-w-0 w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right" value={settings.guidance} onChange={e => setSettings({...settings, guidance: Number(e.target.value)})} />
+                             </div>
+                         </div>
+
+                            {/* Output format applies to every task, so it is not an
+                                advanced capability - it is always shown. */}
+                            <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                              <span className="text-gray-400 text-xs w-20">Format</span>
+                              <select
+                                className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                value={settings.outputFormat}
+                                onChange={e => setSettings({...settings, outputFormat: e.target.value})}
+                              >
+                                <option value="png">PNG</option>
+                                <option value="jpg">JPG</option>
+                              </select>
+                            </div>
+
+                            {/* Diagnostics is about network reachability, not the
+                                task - it used to be hidden unless you were upscaling. */}
+                            <div className="space-y-3 rounded-[12px] border border-[#343434] bg-[#181818] p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <h4 className="text-sm font-semibold text-white">Diagnostics</h4>
+                                  <p className="text-xs text-gray-500">Checks whether Hugging Face endpoints are reachable from this machine.</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={runConnectivityDiagnostics}
+                                  disabled={diagnosticLoading}
+                                  className="inline-flex items-center gap-2 rounded-lg bg-[#2f2f2f] px-3 py-2 text-xs font-medium text-white hover:bg-[#3a3a3a] disabled:opacity-50"
+                                >
+                                  <Wifi className={`w-4 h-4 ${diagnosticLoading ? 'animate-pulse' : ''}`} />
+                                  {diagnosticLoading ? 'Checking...' : 'Check Network'}
+                                </button>
+                              </div>
+                              {diagnosticResult && (
+                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[11px] leading-4 text-gray-300 border border-[#2f2f2f]">
+                                  {diagnosticResult}
+                                </pre>
+                              )}
+                            </div>
+
+                                {advancedCaps.length > 0 && (
+                                  <p className="text-xs text-gray-500">
+                                    Model options: only the settings {selectedModel.name} actually supports are listed.
+                                  </p>
+                                )}
+
+                                {(supportsAdvanced('tile_size') || supportsAdvanced('gpu_id')) && (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {supportsAdvanced('tile_size') && (
+                                      <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                                        <span className="text-gray-400 text-xs w-20" title="VAE decode tile edge in pixels. 0 uses the default (256px).">Tile px</span>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="64"
+                                          placeholder="auto"
+                                          className="min-w-0 w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                          value={settings.tileSize}
+                                          onChange={e => setSettings({...settings, tileSize: Number(e.target.value)})}
+                                        />
+                                      </div>
+                                    )}
+                                    {supportsAdvanced('gpu_id') && (
+                                      <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                                        <span className="text-gray-400 text-xs w-16" title="Which GPU to run on. Changing this reloads the model.">GPU</span>
+                                        {/* Populated from /api/system, whose `index` is the same
+                                            number the backend means by "vulkan<N>". Falls back to a
+                                            text field only if the device list could not be read. */}
+                                        {gpuDevices.length > 0 ? (
+                                          <select
+                                            className="min-w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                            value={settings.gpuId}
+                                            onChange={e => setSettings({...settings, gpuId: e.target.value})}
+                                          >
+                                            <option value="">Auto</option>
+                                            {gpuDevices.map((d: any) => (
+                                              <option key={d.index} value={String(d.index)}>
+                                                {d.name}{d.integrated ? ' (integrated)' : ''} — {Number(d.vram_gb).toFixed(1)} GB
+                                              </option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            className="min-w-0 w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                            value={settings.gpuId}
+                                            onChange={e => setSettings({...settings, gpuId: e.target.value})}
+                                            placeholder="0"
+                                          />
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {supportsAdvanced('compression') && (
+                                  <div className="flex bg-[#2c2c2c] p-1.5 rounded-[12px] items-center px-4">
+                                    {/* JPEG and PNG mean genuinely different things by
+                                        "compression", so label it for the chosen format
+                                        rather than pretending one scale fits both. */}
+                                    <span
+                                      className="text-gray-400 text-xs w-24"
+                                      title={settings.outputFormat === 'jpg'
+                                        ? 'JPEG quality 1-100. 0 uses the default (92).'
+                                        : 'PNG is lossless; 1-9 trades encode time against file size. 0 uses the default.'}
+                                    >
+                                      {settings.outputFormat === 'jpg' ? 'Quality' : 'PNG level'}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={settings.outputFormat === 'jpg' ? 100 : 9}
+                                      placeholder="auto"
+                                      className="min-w-0 w-0 flex-1 bg-transparent border-none text-white text-sm outline-none text-right"
+                                      value={settings.compression}
+                                      onChange={e => setSettings({...settings, compression: Number(e.target.value)})}
+                                    />
+                                  </div>
+                                )}
+
+                                {(supportsAdvanced('tta_mode') || supportsAdvanced('allow_fallback')) && (
+                                  <div className="flex flex-col gap-2 bg-[#2c2c2c] p-3 rounded-[12px]">
+                                    {supportsAdvanced('tta_mode') && (
+                                      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={settings.ttaMode}
+                                          onChange={e => setSettings({...settings, ttaMode: e.target.checked})}
+                                        />
+                                        <span>TTA mode <span className="text-gray-500">— cleaner edges, ~8x slower</span></span>
+                                      </label>
+                                    )}
+                                    {supportsAdvanced('allow_fallback') && (
+                                      <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={settings.allowFallback}
+                                          onChange={e => setSettings({...settings, allowFallback: e.target.checked})}
+                                        />
+                                        <span>Allow CPU fallback <span className="text-gray-500">— runs if the GPU can't, far slower</span></span>
+                                      </label>
+                                    )}
+                                  </div>
+                                )}
           </div>
         </div>
       )}

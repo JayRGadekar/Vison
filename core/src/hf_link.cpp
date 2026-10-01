@@ -58,6 +58,9 @@ const std::vector<HfFamily>& families() {
         {"z-image",      "Z-Image",             "tongyi-milm/z-image-turbo",       "image"},
         {"qwen-image",   "Qwen-Image",          "qwen/qwen-image",                 "image"},
         {"sdxl",         "Stable Diffusion XL", "stabilityai/sdxl-turbo",          "image"},
+        // Upscalers are registered for both image and video (same weights, run
+        // per frame for video), so the family task is "upscale".
+        {"esrgan",       "ESRGAN upscaler (GGUF)", "esrgan-4x-remacri",            "upscale"},
     };
     return f;
 }
@@ -149,6 +152,16 @@ HfFamily detect_family(const std::string& repo, const std::string& file) {
     if (has(both, "qwen") && has(both, "edit")) return {};
     if (has(both, "lora") || has(both, "controlnet") || has(both, "inpaint")) return {};
 
+    // Upscalers. The pinned vision.cpp loads ESRGAN-family networks from GGUF
+    // only, so a .pth/.safetensors upscaler is left unmatched rather than
+    // downloaded and then failing to load.
+    if (has(both, "esrgan") || has(both, "realesr") || has(both, "upscal") ||
+        (has(both, "gguf") && (has(both, "4x") || has(both, "x4") || has(both, "2x") || has(both, "x2")) &&
+         (has(both, "remacri") || has(both, "ultrasharp") || has(both, "nmkd") || has(both, "foolhardy")))) {
+        if (f.size() > 5 && f.compare(f.size() - 5, 5, ".gguf") == 0) return family_by_id("esrgan");
+        return {};
+    }
+
     if (has(both, "ltx") && (has(both, "2.5") || has(both, "2_5") || has(both, "ltx25"))) return family_by_id("ltx-2.5");
     if (has(both, "minimax") && has(both, "h3")) return family_by_id("minimax-h3");
     if (has(both, "hunyuan") && has(both, "video")) return family_by_id("hunyuan-video");
@@ -175,7 +188,7 @@ bool is_main_model_candidate(const std::string& path) {
                         (p.size() > 12 && p.compare(p.size() - 12, 12, ".safetensors") == 0);
     if (!ext_ok) return false;
     static const char* companions[] = {"vae", "text_encoder", "clip", "t5", "tokenizer", "lora",
-                                       "controlnet", "mmproj", "upscaler", "audio", "embedding",
+                                       "controlnet", "mmproj", "audio", "embedding",
                                        "connector", "encoder"};
     for (const char* c : companions) if (has(p, c)) return false;
     return true;

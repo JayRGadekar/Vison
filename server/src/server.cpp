@@ -667,7 +667,8 @@ json get_default_registry() {
     json registry = base_registry();
     for (const auto& e : load_custom_entries()) {
         const std::string cat = e.value("category", "");
-        if (cat != "image_generation" && cat != "video_generation") continue;
+        if (cat != "image_generation" && cat != "video_generation" &&
+            cat != "image_upscaling" && cat != "video_upscaling") continue;
         json entry = e;
         entry.erase("category");
         registry["models"][cat].push_back(entry);
@@ -1133,7 +1134,15 @@ int main(int argc, char** argv) {
                 int status = 0;
                 const std::string api = "https://huggingface.co/api/models/" + link.repo +
                                         "/tree/" + link.revision + "?recursive=true";
-                if (!vison::http_get_string(api, listing, status, err)) {
+                // Same resilience as downloads: networks that reset connections
+                // to huggingface.co often still reach the mirror.
+                bool got = false;
+                for (const auto& candidate : url_candidates(api)) {
+                    listing.clear(); err.clear(); status = 0;
+                    if (vison::http_get_string(candidate, listing, status, err)) { got = true; break; }
+                    if (status == 404 || status == 401 || status == 403) break;
+                }
+                if (!got) {
                     if (status == 404) fail("Repository or revision not found: " + link.repo);
                     else if (status == 401 || status == 403) fail("Repository not found, or it is private or gated. Vison can only download public files.");
                     else fail("Could not read the repository listing (" + err + ")");
@@ -1196,6 +1205,12 @@ int main(int argc, char** argv) {
                 return;
             }
 
+            const bool is_upscale = family.task == "upscale";
+            if (is_upscale && (file.size() < 5 || file.compare(file.size() - 5, 5, ".gguf") != 0)) {
+                fail("Upscaler models must be GGUF files (e.g. Acly/Real-ESRGAN-GGUF). .pth and .safetensors upscalers are not supported.");
+                return;
+            }
+
             json entry = find_model_entry(family.template_id);
             if (entry.is_null() || !entry.contains("files")) { fail("Internal error: missing family template."); return; }
 
@@ -1244,16 +1259,30 @@ int main(int argc, char** argv) {
             // The template sampler defaults belong to its own checkpoint (SDXL
             // Turbo 4 steps / cfg 1.0 are wrong for an ordinary SDXL model).
             if (family.id == "sdxl") { entry["default_steps"] = 25; entry["default_guidance"] = 7.0; }
+            if (is_upscale) entry["description"] = "Added from huggingface.co/" + link.repo + " (" + file +
+                                                   "). Runs with the ESRGAN upscaling pipeline.";
 
             json kept = json::array();
             for (const auto& e : load_custom_entries()) if (e.value("id", "") != id) kept.push_back(e);
             json stored = entry;
-            stored["category"] = family.task == "video" ? "video_generation" : "image_generation";
-            kept.push_back(stored);
+            if (is_upscale) {
+                // One download serves both tasks: register an image and a video entry.
+                stored["category"] = "image_upscaling";
+                kept.push_back(stored);
+                json vstored = stored;
+                for (const auto& m : base_registry()["models"]["video_upscaling"]) {
+                    if (m.value("id", "") == family.template_id && m.contains("advanced")) vstored["advanced"] = m["advanced"];
+                }
+                vstored["category"] = "video_upscaling";
+                kept.push_back(vstored);
+            } else {
+                stored["category"] = family.task == "video" ? "video_generation" : "image_generation";
+                kept.push_back(stored);
+            }
             if (!save_custom_entries(kept)) { fail("Could not save the custom model list."); return; }
 
             std::cout << "[Custom] registered " << id << " (" << family.id << ")" << std::endl;
-            res.set_content(json{{"status", "ok"}, {"model", entry}, {"task", family.task}}.dump(), "application/json");
+            res.set_content(json{{"status", "ok"}, {"model", entry}, {"task", is_upscale ? "image_upscale" : family.task}}.dump(), "application/json");
         } catch (const std::exception& e) {
             fail(e.what());
         }

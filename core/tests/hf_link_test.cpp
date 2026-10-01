@@ -31,6 +31,10 @@ int main() {
     CHECK(detect_family("a/b", "Wan2.1_t2v_1.3B.gguf").id == "wan-2.1");
     CHECK(detect_family("Abiray/LTX-2.5-Distilled-GGUF", "q.gguf").id == "ltx-2.5");
     CHECK(detect_family("a/ltx-2.3", "q.gguf").id.empty());
+    CHECK(detect_family("Acly/Real-ESRGAN-GGUF", "RealESRGAN-x4plus_anime-6B-F16.gguf").id == "esrgan");
+    CHECK(detect_family("a/4x-upscalers", "4x-UltraSharp.gguf").id == "esrgan");
+    CHECK(detect_family("a/Real-ESRGAN", "RealESRGAN_x4plus.pth").id.empty());
+    CHECK(detect_family("a/Real-ESRGAN", "RealESRGAN_x4plus.safetensors").id.empty());
     CHECK(detect_family("someone/random-llm", "model.safetensors").id.empty());
 
     CHECK(!is_main_model_candidate("vae/x.safetensors"));

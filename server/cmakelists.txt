@@ -4,3 +4,15 @@ add_executable(vison_server
 
 target_include_directories(vison_server PUBLIC include)
 target_link_libraries(vison_server PRIVATE vison_core vison_pipelines cpp-httplib nlohmann_json)
+
+# With GGML_BACKEND_DL the compute backends (ggml-vulkan, ggml-cpu-*) are
+# plugins loaded at runtime, so nothing links them into vison_server. Building
+# only this target (as CI does) would then produce an exe with no backends
+# beside it. Make the dependency explicit so they are always built together.
+if(GGML_BACKEND_DL)
+    foreach(backend IN LISTS GGML_AVAILABLE_BACKENDS)
+        if(TARGET ${backend})
+            add_dependencies(vison_server ${backend})
+        endif()
+    endforeach()
+endif()
